@@ -32,6 +32,7 @@ try {
 
 // we have to clean up after tests so there is no stupid logging
 // @link https://github.com/pouchdb/pouchdb-server/issues/226
+// because it does not work with yarn2, it is expected that this module is installed via express-pouchdb
 const PouchdbAllDbs = require('pouchdb-all-dbs');
 PouchdbAllDbs(PouchDB);
 
