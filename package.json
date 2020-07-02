@@ -208,7 +208,7 @@
     "subscriptions-transport-ws": "0.9.16",
     "ts-node": "8.10.2",
     "tslint": "6.1.2",
-    "typescript": "3.8.3",
+    "typescript": "3.9.6",
     "uglify-js": "3.10.0",
     "uglifyjs-webpack-plugin": "2.2.0",
     "walk-sync": "2.2.0",
