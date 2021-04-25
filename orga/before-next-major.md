@@ -43,6 +43,13 @@ This would also make it possible to use RxDB together with [NativeScript](https:
 Pouchdb will still be the default in the main build.
 
 
+## Make RxDocument-acessors functions
+
+Things like `RxDocument.deleted$` or `RxDocument.$` should be functions instead of getters.
+We apply a hack atm which does not really work with typescript.
+https://github.com/microsoft/TypeScript/issues/39254#issuecomment-649831793
+
+
 ## Make RxDcouments immutable
 At the current version of RxDB, RxDocuments mutate themself when they recieve ChangeEvents from the database.
 For example when you have a document where `name = 'foo'` and some update changes the state to `name = 'bar'` in the database, then the previous javascript-object will change it's own property to the have `doc.name === 'bar'`.
@@ -64,6 +71,24 @@ In production-mode, there will be nothing that ensures immutability.
 
 ## server-plugin: overwrite defaults of pouchdbExpressOptions
 The defaults of `pouchdbExpressOptions` from `RxDatabase.server()` require the user to configure stuff to not polute the projects folder with config and log files. We should overwrite the defaults to use `inMemoryConfig: true` and store the logs in the tmp folder.
+
+## remove deprecated RxDocument.atomicSet()
+`atomicSet` is deprecated in favor of `atomicPatch`. Remove the function in the next major release.
+
+## remove RxDatabase.collection()
+It was replaced by `RxDatabase.addCollections()` which is faster and better typed.
+
+## rename wording of the json dump plugin
+The words `dump()` and `importDump()` are confusing. Name it import/export or sth.
+
+## set putAttachment(skipIfSame=true)
+
+This should be the default. `skipIfSame=true`
+
+## db.server() should be async
+
+`db.server()` should be async and reject the promise when the startup fails, for example because the port is already used.
+
 
 # Maybe
 

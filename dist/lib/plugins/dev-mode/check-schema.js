@@ -102,13 +102,6 @@ function validateFieldsDeep(jsonSchema) {
             });
         }
       }
-    } // if primary is ref, throw
-
-
-    if (schemaObj.hasOwnProperty('ref') && schemaObj.primary) {
-      throw (0, _rxError.newRxError)('SC5', {
-        fieldName: fieldName
-      });
     }
 
     var isNested = path.split('.').length >= 2; // nested only
@@ -185,7 +178,13 @@ function getSchemaPropertyRealPath(shortPath) {
 
 
 function checkSchema(jsonSchema) {
-  // check _rev
+  if (!jsonSchema.hasOwnProperty('properties')) {
+    throw (0, _rxError.newRxError)('SC29', {
+      schema: jsonSchema
+    });
+  } // _rev MUST NOT exist, it is added by RxDB
+
+
   if (jsonSchema.properties._rev) {
     throw (0, _rxError.newRxError)('SC10', {
       schema: jsonSchema

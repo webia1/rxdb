@@ -14,13 +14,16 @@ import {
     createRxDatabase,
     createRxSchema,
     getPouchLocation,
-    randomCouchString
-} from '../../';
+    randomCouchString,
+    addRxPlugin
+} from '../../plugins/core';
 import AsyncTestUtil from 'async-test-util';
 import * as schemas from '../helper/schemas';
 import * as humansCollection from '../helper/humans-collection';
 import * as schemaObjects from '../helper/schema-objects';
 
+import { RxDBEncryptionPlugin } from '../../plugins/encryption';
+addRxPlugin(RxDBEncryptionPlugin);
 
 config.parallel('rx-database.test.js', () => {
     describe('.create()', () => {
@@ -327,31 +330,6 @@ config.parallel('rx-database.test.js', () => {
                 db1.destroy();
                 db2.destroy();
             });
-            it('create 2 time with different schema should work when no docs exist', async () => {
-                const name = randomCouchString(10);
-                const collectionName = 'foobar';
-                const db1 = await createRxDatabase({
-                    name,
-                    adapter: 'memory',
-                    ignoreDuplicate: true
-                });
-                const db2 = await createRxDatabase({
-                    name,
-                    adapter: 'memory',
-                    ignoreDuplicate: true
-                });
-                await db1.collection({
-                    name: collectionName,
-                    schema: schemas.human
-                });
-                await db2.collection({
-                    name: collectionName,
-                    schema: schemas.humanFinal
-                });
-
-                db1.destroy();
-                db2.destroy();
-            });
             it('get the collection by passing the name', async () => {
                 const db = await createRxDatabase({
                     name: randomCouchString(10),
@@ -514,25 +492,27 @@ config.parallel('rx-database.test.js', () => {
                     name: randomCouchString(10),
                     adapter: 'memory'
                 });
-                await db.collection({
-                    name: 'foobar',
-                    schema: schemas.human
+                await db.addCollections({
+                    foobar: {
+                        schema: schemas.human
+                    }
                 });
-                db.destroy();
+                await db.destroy();
                 assert.strictEqual(db.destroyed, true);
-                db.destroy();
+                await db.destroy();
             });
             it('should not crash if destroy is called twice', async () => {
                 const db = await createRxDatabase({
                     name: randomCouchString(10),
                     adapter: 'memory'
                 });
-                await db.collection({
-                    name: 'foobar',
-                    schema: schemas.human
+                await db.addCollections({
+                    foobar: {
+                        schema: schemas.human
+                    }
                 });
-                db.destroy();
-                db.destroy();
+                await db.destroy();
+                await db.destroy();
                 assert.strictEqual(db.destroyed, true);
             });
         });

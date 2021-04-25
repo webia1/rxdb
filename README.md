@@ -1,6 +1,14 @@
+<!--
 | Announcement                                                        |
 | :--: |
 | &emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp; Version **9.0.0** is now released, read the [ANNOUNCEMENT](./orga/releases/9.0.0.md) &emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp; |
+-->
+
+| Announcement                                                        |
+| :--: |
+| Please take part in the [RxDB user survey 2021](https://forms.gle/aGPWdo2iELj4Ykkm9). This will help me to better plan the steps for the next major release. (takes about 2 minutes)
+
+
 
 <p align="center">
   <a href="https://github.com/pubkey/rxdb">
@@ -62,7 +70,7 @@
 | 📤📥  | **Import/Export** of the database-state (json), awesome for coding with [TDD](https://en.wikipedia.org/wiki/Test-driven_development)                                                                                                    |
 | 📡  | **Multi-Window** to synchronise data between different browser-windows or nodejs-processes                                                                                                                                              |
 | 💅 | **ORM-capabilities** to easily handle data-code-relations and customize functions of documents and collections                                                                                                                                                                               |
-| 🔷  | Full **TypeScript** support for fast and secure coding                                                                                                                                              |
+| 🔷  | Full **TypeScript** support for fast and secure coding (Requires Typescript v3.8 or higher)                                                                                                                                             |
 
 ## Platform-support
 

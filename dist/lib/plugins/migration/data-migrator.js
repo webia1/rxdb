@@ -1,5 +1,7 @@
 "use strict";
 
+var _interopRequireDefault = require("@babel/runtime/helpers/interopRequireDefault");
+
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
@@ -7,9 +9,10 @@ exports.createOldCollection = createOldCollection;
 exports._getOldCollections = _getOldCollections;
 exports.mustMigrate = mustMigrate;
 exports.createDataMigrator = createDataMigrator;
-exports._runStrategyIfNotNull = _runStrategyIfNotNull;
+exports.runStrategyIfNotNull = runStrategyIfNotNull;
 exports.getBatchOfOldCollection = getBatchOfOldCollection;
 exports.migrateDocumentData = migrateDocumentData;
+exports.isDocumentDataWithoutRevisionEqual = isDocumentDataWithoutRevisionEqual;
 exports._migrateDocument = _migrateDocument;
 exports.deleteOldCollection = deleteOldCollection;
 exports.migrateOldCollection = migrateOldCollection;
@@ -17,6 +20,8 @@ exports.migratePromise = migratePromise;
 exports.DataMigrator = void 0;
 
 var _rxjs = require("rxjs");
+
+var _deepEqual = _interopRequireDefault(require("deep-equal"));
 
 var _pouchDb = require("../../pouch-db");
 
@@ -33,6 +38,10 @@ var _hooks = require("../../hooks");
 var _crypter = require("../../crypter");
 
 var _rxCollectionHelper = require("../../rx-collection-helper");
+
+var _migrationState = require("./migration-state");
+
+var _operators = require("rxjs/operators");
 
 /**
  * The DataMigrator handles the documents from collections with older schemas
@@ -61,7 +70,11 @@ var DataMigrator = /*#__PURE__*/function () {
     var _this = this;
 
     var batchSize = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : 10;
-    if (this._migrated) throw (0, _rxError.newRxError)('DM1');
+
+    if (this._migrated) {
+      throw (0, _rxError.newRxError)('DM1');
+    }
+
     this._migrated = true;
     var state = {
       done: false,
@@ -77,7 +90,15 @@ var DataMigrator = /*#__PURE__*/function () {
       percent: 0 // percentage
 
     };
-    var observer = new _rxjs.Subject();
+    var stateSubject = new _rxjs.Subject();
+    /**
+     * Add to output of RxDatabase.migrationStates
+     */
+
+    var allSubject = (0, _migrationState.getMigrationStateByDatabase)(this.newestCollection.database);
+    var allList = allSubject.getValue().slice(0);
+    allList.push(stateSubject.asObservable());
+    allSubject.next(allList);
     /**
      * TODO this is a side-effect which might throw
      * We did this because it is not possible to create new Observer(async(...))
@@ -97,7 +118,10 @@ var DataMigrator = /*#__PURE__*/function () {
           return prev = cur + prev;
         }, 0);
         state.total = totalCount;
-        observer.next((0, _util.flatClone)(state));
+        stateSubject.next({
+          collection: _this.newestCollection,
+          state: (0, _util.flatClone)(state)
+        });
         var currentCol = oldCols.shift();
         var currentPromise = Promise.resolve();
 
@@ -109,10 +133,13 @@ var DataMigrator = /*#__PURE__*/function () {
                 state.handled++;
                 state[subState.type] = state[subState.type] + 1;
                 state.percent = Math.round(state.handled / state.total * 100);
-                observer.next((0, _util.flatClone)(state));
+                stateSubject.next({
+                  collection: _this.newestCollection,
+                  state: (0, _util.flatClone)(state)
+                });
               }, function (e) {
                 sub.unsubscribe();
-                observer.error(e);
+                stateSubject.error(e);
               }, function () {
                 sub.unsubscribe();
                 res();
@@ -130,12 +157,17 @@ var DataMigrator = /*#__PURE__*/function () {
       }).then(function () {
         state.done = true;
         state.percent = 100;
-        observer.next((0, _util.flatClone)(state));
-        observer.complete();
+        stateSubject.next({
+          collection: _this.newestCollection,
+          state: (0, _util.flatClone)(state)
+        });
+        stateSubject.complete();
       });
     })();
 
-    return observer.asObservable();
+    return stateSubject.pipe((0, _operators.map)(function (withCollection) {
+      return withCollection.state;
+    }));
   };
 
   _proto.migratePromise = function migratePromise(batchSize) {
@@ -146,7 +178,7 @@ var DataMigrator = /*#__PURE__*/function () {
         if (!must) return Promise.resolve(false);else return new Promise(function (res, rej) {
           var state$ = _this2.migrate(batchSize);
 
-          state$['subscribe'](null, rej, res);
+          state$.subscribe(null, rej, res);
         });
       });
     }
@@ -218,11 +250,11 @@ function createDataMigrator(newestCollection, migrationStrategies) {
   return new DataMigrator(newestCollection, migrationStrategies);
 }
 
-function _runStrategyIfNotNull(oldCollection, version, docOrNull) {
+function runStrategyIfNotNull(oldCollection, version, docOrNull) {
   if (docOrNull === null) {
     return Promise.resolve(null);
   } else {
-    var ret = oldCollection.dataMigrator.migrationStrategies[version](docOrNull);
+    var ret = oldCollection.dataMigrator.migrationStrategies[version](docOrNull, oldCollection);
     var retPromise = (0, _util.toPromise)(ret);
     return retPromise;
   }
@@ -244,15 +276,22 @@ function getBatchOfOldCollection(oldCollection, batchSize) {
 
 
 function migrateDocumentData(oldCollection, docData) {
-  docData = (0, _util.clone)(docData);
+  /**
+   * We cannot deep-clone Blob or Buffer
+   * so we just flat clone it here
+   * and attach it to the deep cloned document data.
+   */
+  var attachmentsBefore = (0, _util.flatClone)(docData._attachments);
+  var mutateableDocData = (0, _util.clone)(docData);
+  mutateableDocData._attachments = attachmentsBefore;
   var nextVersion = oldCollection.version + 1; // run the document throught migrationStrategies
 
-  var currentPromise = Promise.resolve(docData);
+  var currentPromise = Promise.resolve(mutateableDocData);
 
   var _loop2 = function _loop2() {
     var version = nextVersion;
     currentPromise = currentPromise.then(function (docOrNull) {
-      return _runStrategyIfNotNull(oldCollection, version, docOrNull);
+      return runStrategyIfNotNull(oldCollection, version, docOrNull);
     });
     nextVersion++;
   };
@@ -266,16 +305,37 @@ function migrateDocumentData(oldCollection, docData) {
 
     try {
       oldCollection.newestCollection.schema.validate(doc);
-    } catch (e) {
+    } catch (err) {
+      var asRxError = err;
       throw (0, _rxError.newRxError)('DM2', {
         fromVersion: oldCollection.version,
         toVersion: oldCollection.newestCollection.schema.version,
-        finalDoc: doc
+        originalDoc: docData,
+        finalDoc: doc,
+
+        /**
+         * pass down data from parent error,
+         * to make it better understandable what did not work
+         */
+        errors: asRxError.parameters.errors,
+        schema: asRxError.parameters.schema
       });
     }
 
     return doc;
   });
+}
+
+function isDocumentDataWithoutRevisionEqual(doc1, doc2) {
+  var doc1NoRev = Object.assign({}, doc1, {
+    _attachments: undefined,
+    _rev: undefined
+  });
+  var doc2NoRev = Object.assign({}, doc2, {
+    _attachments: undefined,
+    _rev: undefined
+  });
+  return (0, _deepEqual["default"])(doc1NoRev, doc2NoRev);
 }
 /**
  * transform docdata and save to new collection
@@ -283,31 +343,77 @@ function migrateDocumentData(oldCollection, docData) {
  */
 
 
-function _migrateDocument(oldCollection, doc) {
+function _migrateDocument(oldCollection, docData) {
   var action = {
     res: null,
     type: '',
     migrated: null,
-    doc: doc,
+    doc: docData,
     oldCollection: oldCollection,
     newestCollection: oldCollection.newestCollection
   };
-  return migrateDocumentData(oldCollection, doc).then(function (migrated) {
+  return (0, _hooks.runAsyncPluginHooks)('preMigrateDocument', {
+    docData: docData,
+    oldCollection: oldCollection
+  }).then(function () {
+    return migrateDocumentData(oldCollection, docData);
+  }).then(function (migrated) {
+    /**
+     * Determiniticly handle the revision
+     * so migrating the same data on multiple instances
+     * will result in the same output.
+     */
+    if (isDocumentDataWithoutRevisionEqual(docData, migrated)) {
+      /**
+       * Data not changed by migration strategies, keep the same revision.
+       * This ensures that other replicated instances that did not migrate already
+       * will still have the same document.
+       */
+      migrated._rev = docData._rev;
+    } else if (migrated !== null) {
+      /**
+       * data changed, increase revision height
+       * so replicating instances use our new document data
+       */
+      var newHeight = (0, _util.getHeightOfRevision)(docData._rev) + 1;
+      var newRevision = newHeight + '-' + (0, _util.createRevision)(migrated, true);
+      migrated._rev = newRevision;
+    }
+
     action.migrated = migrated;
 
     if (migrated) {
-      (0, _hooks.runPluginHooks)('preMigrateDocument', action); // save to newest collection
+      /**
+       * save to newest collection
+       * notice that this data also contains the attachments data
+       */
+      var attachmentsBefore = migrated._attachments;
 
-      delete migrated._rev;
-      return oldCollection.newestCollection._pouchPut(migrated, true).then(function (res) {
-        action.res = res;
+      var saveData = oldCollection.newestCollection._handleToPouch(migrated);
+
+      saveData._attachments = attachmentsBefore;
+      return oldCollection.newestCollection.pouch.bulkDocs([saveData], {
+        /**
+         * We need new_edits: false
+         * because we provide the _rev by our own
+         */
+        new_edits: false
+      }).then(function () {
+        action.res = saveData;
         action.type = 'success';
         return (0, _hooks.runAsyncPluginHooks)('postMigrateDocument', action);
       });
-    } else action.type = 'deleted';
+    } else {
+      /**
+       * Migration strategy returned null
+       * which means we should not migrate this document,
+       * just drop it.
+       */
+      action.type = 'deleted';
+    }
   }).then(function () {
     // remove from old collection
-    return oldCollection.pouchdb.remove((0, _rxCollectionHelper._handleToPouch)(oldCollection, doc))["catch"](function () {});
+    return oldCollection.pouchdb.remove((0, _rxCollectionHelper._handleToPouch)(oldCollection, docData))["catch"](function () {});
   }).then(function () {
     return action;
   });
@@ -384,7 +490,7 @@ function migratePromise(oldCollection, batchSize) {
   if (!oldCollection._migratePromise) {
     oldCollection._migratePromise = new Promise(function (res, rej) {
       var state$ = migrateOldCollection(oldCollection, batchSize);
-      state$['subscribe'](null, rej, res);
+      state$.subscribe(null, rej, res);
     });
   }
 

@@ -11,6 +11,10 @@ exports.createWithConstructor = createWithConstructor;
 exports.isInstanceOf = isInstanceOf;
 exports.basePrototype = void 0;
 
+var _regenerator = _interopRequireDefault(require("@babel/runtime/regenerator"));
+
+var _asyncToGenerator2 = _interopRequireDefault(require("@babel/runtime/helpers/asyncToGenerator"));
+
 var _objectPath = _interopRequireDefault(require("object-path"));
 
 var _rxjs = require("rxjs");
@@ -26,45 +30,83 @@ var _rxError = require("./rx-error");
 var _hooks = require("./hooks");
 
 var basePrototype = {
+  /**
+   * TODO
+   * instead of appliying the _this-hack
+   * we should make these accesors functions instead of getters.
+   */
   get _data() {
+    var _this = this;
     /**
      * Might be undefined when vuejs-devtools are used
      * @link https://github.com/pubkey/rxdb/issues/1126
      */
-    if (!this.isInstanceOfRxDocument) return undefined;
-    return this._dataSync$.getValue();
+
+
+    if (!_this.isInstanceOfRxDocument) {
+      return undefined;
+    }
+
+    return _this._dataSync$.getValue();
   },
 
   get primaryPath() {
-    if (!this.isInstanceOfRxDocument) return undefined;
-    return this.collection.schema.primaryPath;
+    var _this = this;
+
+    if (!_this.isInstanceOfRxDocument) {
+      return undefined;
+    }
+
+    return _this.collection.schema.primaryPath;
   },
 
   get primary() {
-    if (!this.isInstanceOfRxDocument) return undefined;
-    return this._data[this.primaryPath];
+    var _this = this;
+
+    if (!_this.isInstanceOfRxDocument) {
+      return undefined;
+    }
+
+    return _this._data[_this.primaryPath];
   },
 
   get revision() {
-    if (!this.isInstanceOfRxDocument) return undefined;
-    return this._data._rev;
+    var _this = this;
+
+    if (!_this.isInstanceOfRxDocument) {
+      return undefined;
+    }
+
+    return _this._data._rev;
   },
 
   get deleted$() {
-    if (!this.isInstanceOfRxDocument) return undefined;
-    return this._deleted$.asObservable();
+    var _this = this;
+
+    if (!_this.isInstanceOfRxDocument) {
+      return undefined;
+    }
+
+    return _this._deleted$.asObservable();
   },
 
   get deleted() {
-    if (!this.isInstanceOfRxDocument) return undefined;
-    return this._deleted$.getValue();
+    var _this = this;
+
+    if (!_this.isInstanceOfRxDocument) {
+      return undefined;
+    }
+
+    return _this._deleted$.getValue();
   },
 
   /**
    * returns the observable which emits the plain-data of this document
    */
   get $() {
-    return this._dataSync$.asObservable();
+    var _this = this;
+
+    return _this._dataSync$.asObservable();
   },
 
   _handleChangeEvent: function _handleChangeEvent(changeEvent) {
@@ -266,29 +308,102 @@ var basePrototype = {
 
   /**
    * runs an atomic update over the document
-   * @param fun that takes the document-data and returns a new data-object
+   * @param function that takes the document-data and returns a new data-object
    */
-  atomicUpdate: function atomicUpdate(fun) {
+  atomicUpdate: function atomicUpdate(mutationFunction) {
     var _this2 = this;
 
-    this._atomicQueue = this._atomicQueue.then(function () {
-      var oldData = _this2._dataSync$.getValue();
+    return new Promise(function (res, rej) {
+      _this2._atomicQueue = _this2._atomicQueue.then( /*#__PURE__*/(0, _asyncToGenerator2["default"])( /*#__PURE__*/_regenerator["default"].mark(function _callee() {
+        var done, oldData, newData;
+        return _regenerator["default"].wrap(function _callee$(_context) {
+          while (1) {
+            switch (_context.prev = _context.next) {
+              case 0:
+                done = false; // we need a hacky while loop to stay incide the chain-link of _atomicQueue
+                // while still having the option to run a retry on conflicts
 
-      var ret = fun((0, _util.clone)(_this2._dataSync$.getValue()), _this2);
-      var retPromise = (0, _util.toPromise)(ret);
-      return retPromise.then(function (newData) {
-        // collection does not exist on local documents
-        if (_this2.collection) {
-          newData = _this2.collection.schema.fillObjectWithDefaults(newData);
-        }
+              case 1:
+                if (done) {
+                  _context.next = 24;
+                  break;
+                }
 
-        return _this2._saveData(newData, oldData);
-      });
-    });
-    return this._atomicQueue.then(function () {
-      return _this2;
+                oldData = _this2._dataSync$.getValue();
+                _context.prev = 3;
+                _context.next = 6;
+                return mutationFunction((0, _util.clone)(_this2._dataSync$.getValue()), _this2);
+
+              case 6:
+                newData = _context.sent;
+
+                if (_this2.collection) {
+                  newData = _this2.collection.schema.fillObjectWithDefaults(newData);
+                }
+
+                _context.next = 10;
+                return _this2._saveData(newData, oldData);
+
+              case 10:
+                done = true;
+                _context.next = 22;
+                break;
+
+              case 13:
+                _context.prev = 13;
+                _context.t0 = _context["catch"](3);
+
+                if (!(0, _rxError.isPouchdbConflictError)(_context.t0)) {
+                  _context.next = 20;
+                  break;
+                }
+
+                _context.next = 18;
+                return (0, _util.nextTick)();
+
+              case 18:
+                _context.next = 22;
+                break;
+
+              case 20:
+                rej(_context.t0);
+                return _context.abrupt("return");
+
+              case 22:
+                _context.next = 1;
+                break;
+
+              case 24:
+                res(_this2);
+
+              case 25:
+              case "end":
+                return _context.stop();
+            }
+          }
+        }, _callee, null, [[3, 13]]);
+      })));
     });
   },
+
+  /**
+   * patches the given properties
+   */
+  atomicPatch: function atomicPatch(patch) {
+    return this.atomicUpdate(function (docData) {
+      Object.entries(patch).forEach(function (_ref2) {
+        var k = _ref2[0],
+            v = _ref2[1];
+        docData[k] = v;
+      });
+      return docData;
+    });
+  },
+
+  /**
+   * @deprecated use atomicPatch instead because it is better typed
+   * and does not allow any keys and values
+   */
   atomicSet: function atomicSet(key, value) {
     return this.atomicUpdate(function (docData) {
       _objectPath["default"].set(docData, key, value);

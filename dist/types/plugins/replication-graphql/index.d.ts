@@ -5,15 +5,19 @@
 import { BehaviorSubject, Subject, Subscription, Observable } from 'rxjs';
 import type { RxCollection, GraphQLSyncPullOptions, GraphQLSyncPushOptions, RxPlugin } from '../../types';
 export declare class RxGraphQLReplicationState {
-    collection: RxCollection;
-    pull: GraphQLSyncPullOptions;
-    push: GraphQLSyncPushOptions;
-    deletedFlag: string;
-    lastPulledRevField: string;
-    live: boolean;
+    readonly collection: RxCollection;
+    readonly url: string;
+    headers: {
+        [k: string]: string;
+    };
+    readonly pull: GraphQLSyncPullOptions;
+    readonly push: GraphQLSyncPushOptions;
+    readonly deletedFlag: string;
+    readonly lastPulledRevField: string;
+    readonly live: boolean;
     liveInterval: number;
     retryTime: number;
-    syncRevisions: boolean;
+    readonly syncRevisions: boolean;
     constructor(collection: RxCollection, url: string, headers: {
         [k: string]: string;
     }, pull: GraphQLSyncPullOptions, push: GraphQLSyncPushOptions, deletedFlag: string, lastPulledRevField: string, live: boolean, liveInterval: number, retryTime: number, syncRevisions: boolean);
@@ -43,11 +47,11 @@ export declare class RxGraphQLReplicationState {
     _prepare(): void;
     isStopped(): boolean;
     awaitInitialReplication(): Promise<true>;
-    run(): Promise<void>;
+    run(retryOnFail?: boolean): Promise<void>;
     /**
      * returns true if retry must be done
      */
-    _run(): Promise<boolean>;
+    _run(retryOnFail?: boolean): Promise<boolean>;
     /**
      * @return true if sucessfull
      */
@@ -56,8 +60,11 @@ export declare class RxGraphQLReplicationState {
      * @return true if successfull, false if not
      */
     runPush(): Promise<boolean>;
-    handleDocumentFromRemote(doc: any, docsWithRevisions: any[]): Promise<void>;
+    handleDocumentsFromRemote(docs: any[], docsWithRevisions: any[]): Promise<boolean>;
     cancel(): Promise<any>;
+    setHeaders(headers: {
+        [k: string]: string;
+    }): void;
 }
 export declare function syncGraphQL(this: RxCollection, { url, headers, waitForLeadership, pull, push, deletedFlag, lastPulledRevField, live, liveInterval, // in ms
 retryTime, // in ms

@@ -25,6 +25,54 @@ export interface PouchReplicationOptions {
 }
 
 /**
+ * @link https://pouchdb.com/api.html#changes
+ */
+export interface PouchChangesOptionsBase {
+    include_docs?: boolean;
+    conflicts?: boolean;
+    attachments?: boolean;
+    binary?: boolean;
+    descending?: string;
+    since?: any;
+    limit?: number;
+    timeout?: any;
+    heartbeat?: number | boolean;
+    filter?: any;
+    doc_ids?: string | string[];
+    query_param?: any;
+    view?: any;
+    return_docs?: boolean;
+    batch_size?: number;
+    style?: string;
+}
+
+export interface PouchChangesOptionsLive extends PouchChangesOptionsBase {
+    live: true;
+}
+
+export interface PouchChangesOptionsNonLive extends PouchChangesOptionsBase {
+    live: false;
+}
+interface PouchChangesOnChangeEvent {
+    on: (eventName: string, handler: Function) => void;
+    off: (eventName: string, handler: Function) => void;
+    cancel(): void;
+}
+
+export type PouchWriteError = {
+    /**
+      * status code from pouchdb
+      * 409 for 'conflict'
+    */
+    status: number;
+    error: true;
+    /**
+     * primary key value of the errored document
+     */
+    id: string;
+};
+
+/**
  * possible pouch-settings
  * @link https://pouchdb.com/api.html#create_database
  */
@@ -72,6 +120,85 @@ export type PouchSyncHandler = {
     cancel(): void;
 };
 
+export type PouchChangeRow = {
+    id: string;
+    seq: number;
+    deleted?: true;
+    changes: {
+        rev: 'string'
+    }[],
+    /**
+     * only if include_docs === true
+     */
+    doc?: PouchChangeDoc
+}
+
+export type PouchAttachmentMeta = {
+    digest: string;
+    content_type: string;
+    revpos: number;
+    length: number;
+    stub: boolean;
+};
+
+export type BlobBuffer = Buffer | Blob;
+
+export type PouchAttachmentWithData = PouchAttachmentMeta & {
+    /**
+     * Base64 string with the data
+     * or directly a buffer
+     */
+    data: BlobBuffer;
+    /**
+     * If set, must be false
+     * because we have the full data and not only a stub.
+     */
+    stub?: false;
+}
+
+export type PouchChangeDoc = {
+    _id: string;
+    _rev: string;
+    _attachments: {
+        [attachmentId: string]: PouchAttachmentMeta
+    };
+}
+
+export type WithAttachments<Data> = Data & {
+    /**
+     * Intentional optional,
+     * if the document has no attachments,
+     * we do NOT have an empty object.
+     */
+    _attachments?: {
+        [attachmentId: string]: PouchAttachmentMeta
+    };
+}
+export type WithAttachmentsData<Data> = Data & {
+    /**
+     * Intentional optional,
+     * if the document has no attachments,
+     * we do NOT have an empty object.
+     */
+    _attachments?: {
+        [attachmentId: string]: PouchAttachmentWithData
+    };
+}
+
+
+export type WithPouchMeta<Data> = Data & {
+    _rev: string;
+    _attachments?: {
+        [attachmentId: string]: PouchAttachmentMeta
+    };
+    _deleted?: boolean;
+}
+
+export type PouchdbChangesResult = {
+    results: PouchChangeRow[];
+    last_seq: number;
+}
+
 declare type Debug = {
     enable(what: string): void;
     disable(): void;
@@ -107,14 +234,17 @@ export declare class PouchDBInstance {
             key: string;
             value: {
                 rev: string;
-            }
+            };
+            error?: 'not_found' | string;
         }[];
         total_rows: number;
     }>;
 
     bulkDocs(
         docs: { docs: any[] } | any[],
-        options?: any
+        options?: {
+            new_edits?: boolean;
+        }
     ): Promise<{
         ok: boolean;
         id: string;
@@ -144,7 +274,11 @@ export declare class PouchDBInstance {
         doc: any | string,
         options?: any,
     ): Promise<any>;
-    changes(options?: PouchReplicationOptions): any;
+
+    changes(options: PouchChangesOptionsNonLive): Promise<PouchdbChangesResult>;
+    changes(options: PouchChangesOptionsLive): PouchChangesOnChangeEvent;
+    changes(): Promise<PouchdbChangesResult>;
+
     sync(remoteDb: string | any, options?: PouchReplicationOptions): PouchSyncHandler;
     replicate(options?: PouchReplicationOptions): PouchSyncHandler;
 
@@ -166,7 +300,50 @@ export declare class PouchDBInstance {
         attachmentId: string,
         rev: string
     ): Promise<void>;
-    bulkGet(options?: any): Promise<any>;
+
+    /**
+     * @link https://pouchdb.com/api.html#bulk_get
+     */
+    bulkGet(options: {
+        docs: {
+            // ID of the document to fetch
+            id: string;
+            // Revision of the document to fetch. If this is not specified, all available revisions are fetched
+            rev?: string;
+
+            //  I could not find out what this should be
+            atts_since?: any;
+        }[],
+        // Each returned revision body will include its revision history as a _revisions property. Default is false
+        revs?: boolean;
+        // what does this?
+        latest?: boolean;
+        // Include attachment data in the response. Default is false, resulting in only stubs being returned.
+        attachments?: boolean;
+        // Return attachment data as Blobs/Buffers, instead of as base64-encoded strings. Default is false
+        binary?: boolean;
+    }): Promise<{
+        results: {
+            id: string;
+            docs: {
+                ok?: {
+                    _id: string;
+                    _rev: string;
+                    _revisions: {
+                        ids: string[];
+                        start: number;
+                    }
+                }
+                error?: {
+                    error: string;
+                    id: string;
+                    reason: string;
+                    rev: string;
+                }
+            }[]
+        }[]
+    }>;
+
     revsDiff(diff: any): Promise<any>;
     explain(query: any): Promise<any>;
 
@@ -175,6 +352,14 @@ export declare class PouchDBInstance {
     }>;
 
     createIndex(opts: {
+        name: string;
+        ddoc: string;
         index: any;
     }): Promise<void>;
+
+    /**
+     * @link https://pouchdb.com/errors.html#event_emitter_limit
+     */
+    setMaxListeners(maxListenersAmount: number): void;
+    getMaxListeners(): number;
 }

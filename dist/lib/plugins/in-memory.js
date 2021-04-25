@@ -287,7 +287,10 @@ function replicateExistingDocuments(fromCollection, toCollection) {
 
 function setIndexes(schema, pouch) {
   return Promise.all(schema.indexes.map(function (indexAr) {
+    var indexName = 'idx-rxdb-' + indexAr.join(',');
     return pouch.createIndex({
+      ddoc: indexName,
+      name: indexName,
       index: {
         fields: indexAr
       }
@@ -312,7 +315,14 @@ function streamChangedDocuments(rxCollection) {
     since: 'now',
     live: true,
     include_docs: true
-  }), 'change').pipe((0, _operators.map)(function (changeAr) {
+  }), 'change').pipe(
+  /**
+   * we need this delay because with pouchdb 7.2.2
+   * it happened that _doNotEmitSet.add() from applyChangedDocumentToPouch()
+   * was called after the change was streamed downwards
+   * which then leads to a wrong detection
+   */
+  (0, _operators.delay)(0), (0, _operators.map)(function (changeAr) {
     return changeAr[0];
   }), // rxjs emits an array for whatever reason
   (0, _operators.filter)(function (change) {
@@ -403,6 +413,7 @@ var prototypes = {
 };
 exports.prototypes = prototypes;
 var RxDBInMemoryPlugin = {
+  name: 'in-memory',
   rxdb: rxdb,
   prototypes: prototypes
 };

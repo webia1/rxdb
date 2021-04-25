@@ -14,8 +14,6 @@ import {
     filter
 } from 'rxjs/operators';
 import GraphQLClient from 'graphql-client';
-
-
 import {
     promiseWait,
     flatClone,
@@ -69,17 +67,17 @@ addRxPlugin(RxDBWatchForChangesPlugin);
 export class RxGraphQLReplicationState {
 
     constructor(
-        public collection: RxCollection,
-        url: string,
-        headers: { [k: string]: string },
-        public pull: GraphQLSyncPullOptions,
-        public push: GraphQLSyncPushOptions,
-        public deletedFlag: string,
-        public lastPulledRevField: string,
-        public live: boolean,
+        public readonly collection: RxCollection,
+        public readonly url: string,
+        public headers: { [k: string]: string },
+        public readonly pull: GraphQLSyncPullOptions,
+        public readonly push: GraphQLSyncPushOptions,
+        public readonly deletedFlag: string,
+        public readonly lastPulledRevField: string,
+        public readonly live: boolean,
         public liveInterval: number,
         public retryTime: number,
-        public syncRevisions: boolean
+        public readonly syncRevisions: boolean
     ) {
         this.client = GraphQLClient({
             url,
@@ -133,9 +131,17 @@ export class RxGraphQLReplicationState {
     }
 
     isStopped(): boolean {
-        if (!this.live && this._subjects.initialReplicationComplete['_value']) return true;
-        if (this._subjects.canceled['_value']) return true;
-        else return false;
+        if (this.collection.destroyed) {
+            return true;
+        }
+        if (!this.live && this._subjects.initialReplicationComplete['_value']) {
+            return true;
+        }
+        if (this._subjects.canceled['_value']) {
+            return true;
+        }
+
+        return false;
     }
 
     awaitInitialReplication(): Promise<true> {
@@ -146,7 +152,7 @@ export class RxGraphQLReplicationState {
     }
 
     // ensures this._run() does not run in parallel
-    async run(): Promise<void> {
+    async run(retryOnFail = true): Promise<void> {
         if (this.isStopped()) {
             return;
         }
@@ -158,9 +164,9 @@ export class RxGraphQLReplicationState {
         this._runQueueCount++;
         this._runningPromise = this._runningPromise.then(async () => {
             this._subjects.active.next(true);
-            const willRetry = await this._run();
+            const willRetry = await this._run(retryOnFail);
             this._subjects.active.next(false);
-            if (!willRetry && this._subjects.initialReplicationComplete['_value'] === false) {
+            if (retryOnFail && !willRetry && this._subjects.initialReplicationComplete['_value'] === false) {
                 this._subjects.initialReplicationComplete.next(true);
             }
             this._runQueueCount--;
@@ -171,12 +177,12 @@ export class RxGraphQLReplicationState {
     /**
      * returns true if retry must be done
      */
-    async _run(): Promise<boolean> {
+    async _run(retryOnFail = true): Promise<boolean> {
         this._runCount++;
 
         if (this.push) {
             const ok = await this.runPush();
-            if (!ok) {
+            if (!ok && retryOnFail) {
                 setTimeout(() => this.run(), this.retryTime);
                 /*
                     Because we assume that conflicts are solved on the server side,
@@ -189,7 +195,7 @@ export class RxGraphQLReplicationState {
 
         if (this.pull) {
             const ok = await this.runPull();
-            if (!ok) {
+            if (!ok && retryOnFail) {
                 setTimeout(() => this.run(), this.retryTime);
                 return true;
             }
@@ -203,7 +209,9 @@ export class RxGraphQLReplicationState {
      */
     async runPull(): Promise<boolean> {
         // console.log('RxGraphQLReplicationState.runPull(): start');
-        if (this.isStopped()) return Promise.resolve(false);
+        if (this.isStopped()) {
+            return Promise.resolve(false);
+        }
 
         const latestDocument = await getLastPullDocument(this.collection, this.endpointHash);
         const latestDocumentData = latestDocument ? latestDocument : null;
@@ -213,7 +221,13 @@ export class RxGraphQLReplicationState {
         try {
             result = await this.client.query(pullGraphQL.query, pullGraphQL.variables);
             if (result.errors) {
-                throw new Error(result.errors);
+                if (typeof result.errors === 'string') {
+                    throw new Error(result.errors);
+                } else {
+                    const err: any = new Error('unknown errors occured - see innerErrors for more details');
+                    err.innerErrors = result.errors;
+                    throw err;
+                }
             }
         } catch (err) {
             this._subjects.error.next(err);
@@ -222,9 +236,10 @@ export class RxGraphQLReplicationState {
 
         // this assumes that there will be always only one property in the response
         // is this correct?
-        const data = result.data[Object.keys(result.data)[0]];
-        const modified = data.map((doc: any) => (this.pull as any).modifier(doc));
-
+        const data: any[] = result.data[Object.keys(result.data)[0]];
+        const modified: any[] = (await Promise.all(data
+            .map(async (doc: any) => await (this.pull as any).modifier(doc))
+        )).filter(doc => !!doc);
 
         /**
          * Run schema validation in dev-mode
@@ -248,11 +263,10 @@ export class RxGraphQLReplicationState {
             this.collection,
             docIds
         );
-        await Promise.all(
-            modified
-                .map((doc: any) => this.handleDocumentFromRemote(
-                    doc, docsWithRevisions as any))
-        );
+        if (this.isStopped()) {
+            return true;
+        }
+        await this.handleDocumentsFromRemote(modified, docsWithRevisions as any);
         modified.map((doc: any) => this._subjects.recieved.next(doc));
 
         if (modified.length === 0) {
@@ -290,7 +304,7 @@ export class RxGraphQLReplicationState {
             this.syncRevisions
         );
 
-        const changesWithDocs = changes.results.map((change: any) => {
+        const changesWithDocs: any = (await Promise.all(changes.results.map(async (change: any) => {
             let doc = change['doc'];
 
             doc[this.deletedFlag] = !!change['deleted'];
@@ -302,14 +316,17 @@ export class RxGraphQLReplicationState {
                 delete doc._rev;
             }
 
-            doc = (this.push as any).modifier(doc);
+            doc = await (this.push as any).modifier(doc);
+            if (!doc) {
+                return null;
+            }
 
             const seq = change.seq;
             return {
                 doc,
                 seq
             };
-        });
+        }))).filter(doc => doc);
 
         let lastSuccessfullChange = null;
         try {
@@ -324,7 +341,13 @@ export class RxGraphQLReplicationState {
                 const pushObj = await this.push.queryBuilder(changeWithDoc.doc);
                 const result = await this.client.query(pushObj.query, pushObj.variables);
                 if (result.errors) {
-                    throw new Error(JSON.stringify(result.errors));
+                    if (typeof result.errors === 'string') {
+                        throw new Error(result.errors);
+                    } else {
+                        const err: any = new Error('unknown errors occured - see innerErrors for more details');
+                        err.innerErrors = result.errors;
+                        throw err;
+                    }
                 } else {
                     this._subjects.send.next(changeWithDoc.doc);
                     lastSuccessfullChange = changeWithDoc;
@@ -364,46 +387,58 @@ export class RxGraphQLReplicationState {
         return true;
     }
 
-    async handleDocumentFromRemote(doc: any, docsWithRevisions: any[]) {
-        const deletedValue = doc[this.deletedFlag];
-        const toPouch = this.collection._handleToPouch(doc);
-        // console.log('handleDocumentFromRemote(' + toPouch._id + ') start');
-        toPouch._deleted = deletedValue;
-        delete toPouch[this.deletedFlag];
+    async handleDocumentsFromRemote(docs: any[], docsWithRevisions: any[]): Promise<boolean> {
+        const toPouchDocs: any[] = [];
+        for (const doc of docs) {
+            const deletedValue = doc[this.deletedFlag];
+            const toPouch = this.collection._handleToPouch(doc);
+            toPouch._deleted = deletedValue;
+            delete toPouch[this.deletedFlag];
 
-        if (!this.syncRevisions) {
-            const primaryValue = toPouch._id;
+            if (!this.syncRevisions) {
+                const primaryValue = toPouch._id;
 
-            const pouchState = docsWithRevisions[primaryValue];
-            let newRevision = createRevisionForPulledDocument(
-                this.endpointHash,
-                toPouch
-            );
-            if (pouchState) {
-                const newRevisionHeight = pouchState.revisions.start + 1;
-                const revisionId = newRevision;
-                newRevision = newRevisionHeight + '-' + newRevision;
-                toPouch._revisions = {
-                    start: newRevisionHeight,
-                    ids: pouchState.revisions.ids
-                };
-                toPouch._revisions.ids.unshift(revisionId);
+                const pouchState = docsWithRevisions[primaryValue];
+                let newRevision = createRevisionForPulledDocument(
+                    this.endpointHash,
+                    toPouch
+                );
+                if (pouchState) {
+                    const newRevisionHeight = pouchState.revisions.start + 1;
+                    const revisionId = newRevision;
+                    newRevision = newRevisionHeight + '-' + newRevision;
+                    toPouch._revisions = {
+                        start: newRevisionHeight,
+                        ids: pouchState.revisions.ids
+                    };
+                    toPouch._revisions.ids.unshift(revisionId);
+                } else {
+                    newRevision = '1-' + newRevision;
+                }
+
+                toPouch._rev = newRevision;
             } else {
-                newRevision = '1-' + newRevision;
+                toPouch[this.lastPulledRevField] = toPouch._rev;
             }
 
-            toPouch._rev = newRevision;
-        } else {
-            toPouch[this.lastPulledRevField] = toPouch._rev;
+            toPouchDocs.push({
+                doc: toPouch,
+                deletedValue
+            });
         }
 
+
         const startTime = now();
-        await this.collection.pouch.bulkDocs(
-            [
-                toPouch
-            ], {
-            new_edits: false
-        });
+        await this.collection.database.lockedRun(
+            async () => {
+                await this.collection.pouch.bulkDocs(
+                    toPouchDocs.map(tpd => tpd.doc),
+                    {
+                        new_edits: false
+                    }
+                );
+            }
+        );
         const endTime = now();
 
         /**
@@ -412,29 +447,43 @@ export class RxGraphQLReplicationState {
          * we create the event and emit it,
          * so other instances get informed about it
          */
-        const originalDoc = flatClone(toPouch);
+        for (const tpd of toPouchDocs) {
+            const originalDoc = flatClone(tpd.doc);
 
-        if (deletedValue) {
-            originalDoc._deleted = deletedValue;
-        } else {
-            delete originalDoc._deleted;
+            if (tpd.deletedValue) {
+                originalDoc._deleted = tpd.deletedValue;
+            } else {
+                delete originalDoc._deleted;
+            }
+            delete originalDoc[this.deletedFlag];
+            delete originalDoc._revisions;
+
+            const cE = changeEventfromPouchChange(
+                originalDoc,
+                this.collection,
+                startTime,
+                endTime
+            );
+            this.collection.$emit(cE);
         }
-        delete originalDoc[this.deletedFlag];
-        delete originalDoc._revisions;
 
-        const cE = changeEventfromPouchChange(
-            originalDoc,
-            this.collection,
-            startTime,
-            endTime
-        );
-        this.collection.$emit(cE);
+        return true;
     }
+
     cancel(): Promise<any> {
-        if (this.isStopped()) return Promise.resolve(false);
+        if (this.isStopped()) {
+            return Promise.resolve(false);
+        }
         this._subs.forEach(sub => sub.unsubscribe());
         this._subjects.canceled.next(true);
         return Promise.resolve(true);
+    }
+
+    setHeaders(headers: { [k: string]: string }): void {
+        this.client = GraphQLClient({
+            url: this.url,
+            headers
+        });
     }
 }
 
@@ -482,11 +531,19 @@ export function syncGraphQL(
         syncRevisions
     );
 
-    if (!autoStart) return replicationState;
+    if (!autoStart) {
+        return replicationState;
+    }
 
     // run internal so .sync() does not have to be async
-    const waitTillRun: any = waitForLeadership ? this.database.waitForLeadership() : promiseWait(0);
+    const waitTillRun: any = (
+        waitForLeadership &&
+        this.database.multiInstance // do not await leadership if not multiInstance
+    ) ? this.database.waitForLeadership() : promiseWait(0);
     waitTillRun.then(() => {
+        if (collection.destroyed) {
+            return;
+        }
 
         // trigger run once
         replicationState.run();
@@ -499,7 +556,11 @@ export function syncGraphQL(
                     while (!replicationState.isStopped()) {
                         await promiseWait(replicationState.liveInterval);
                         if (replicationState.isStopped()) return;
-                        await replicationState.run();
+                        await replicationState.run(
+                            // do not retry on liveInterval-runs because they might stack up
+                            // when failing
+                            false
+                        );
                     }
                 })();
             }
@@ -544,6 +605,7 @@ export const prototypes = {
 };
 
 export const RxDBReplicationGraphQLPlugin: RxPlugin = {
+    name: 'replication-graphql',
     rxdb,
     prototypes
 };

@@ -31,6 +31,8 @@ var _rxDocumentPrototypeMerge = require("./rx-document-prototype-merge");
 
 var _eventReduce = require("./event-reduce");
 
+var _queryCache = require("./query-cache");
+
 var _queryCount = 0;
 
 var newQueryID = function newQueryID() {
@@ -39,14 +41,18 @@ var newQueryID = function newQueryID() {
 
 var RxQueryBase = /*#__PURE__*/function () {
   /**
-   * counts how often the execution on the whole db was done
-   * (used for tests and debugging)
+   * Some stats then are used for debugging and cache replacement policies
    */
   // used by some plugins
+  // used to count the subscribers to the query
   function RxQueryBase(op, mangoQuery, collection) {
     this.id = newQueryID();
     this._execOverDatabaseCount = 0;
+    this._creationTime = (0, _util.now)();
+    this._lastEnsureEqual = 0;
     this.other = {};
+    this.uncached = false;
+    this.refCount$ = new _rxjs.BehaviorSubject(null);
     this._latestChangeEvent = -1;
     this._resultsData = null;
     this._resultsDataMap = new Map();
@@ -298,7 +304,7 @@ var RxQueryBase = /*#__PURE__*/function () {
       if (!this._$) {
         /**
          * We use _resultsDocs$ to emit new results
-         * This also ensure that there is a reemit on subscribe
+         * This also ensures that there is a reemit on subscribe
          */
         var results$ = this._resultsDocs$.pipe((0, _operators.mergeMap)(function (docs) {
           return _ensureEqual(_this3).then(function (hasChanged) {
@@ -319,7 +325,7 @@ var RxQueryBase = /*#__PURE__*/function () {
           // copy the array so it wont matter if the user modifies it
           var ret = Array.isArray(docs) ? docs.slice() : docs;
           return ret;
-        }))['asObservable']();
+        })).asObservable();
         /**
          * subscribe to the changeEvent-stream so it detects changes if it has subscribers
          */
@@ -331,7 +337,9 @@ var RxQueryBase = /*#__PURE__*/function () {
           return false;
         }));
         this._$ = // tslint:disable-next-line
-        (0, _rxjs.merge)(results$, changeEvents$);
+        (0, _rxjs.merge)(results$, changeEvents$, this.refCount$.pipe((0, _operators.filter)(function () {
+          return false;
+        })));
       }
 
       return this._$;
@@ -383,10 +391,16 @@ function createRxQuery(op, queryObj, collection) {
     });
   }
 
+  (0, _hooks.runPluginHooks)('preCreateRxQuery', {
+    op: op,
+    queryObj: queryObj,
+    collection: collection
+  });
   var ret = new RxQueryBase(op, queryObj, collection); // ensure when created with same params, only one is created
 
   ret = tunnelQueryCache(ret);
   (0, _hooks.runPluginHooks)('createRxQuery', ret);
+  (0, _queryCache.triggerCacheReplacement)(collection);
   return ret;
 }
 /**
@@ -430,6 +444,7 @@ function _ensureEqual(rxQuery) {
 
 
 function __ensureEqual(rxQuery) {
+  rxQuery._lastEnsureEqual = (0, _util.now)();
   if (rxQuery.collection.database.destroyed) return false; // db is closed
 
   if (_isResultsInSync(rxQuery)) return false; // nothing happend

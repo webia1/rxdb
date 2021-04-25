@@ -102,14 +102,6 @@ export function validateFieldsDeep(jsonSchema: any): true {
             }
         }
 
-        // if primary is ref, throw
-        if (schemaObj.hasOwnProperty('ref') && schemaObj.primary) {
-            throw newRxError('SC5', {
-                fieldName
-            });
-        }
-
-
         const isNested = path.split('.').length >= 2;
 
         // nested only
@@ -182,7 +174,14 @@ function getSchemaPropertyRealPath(shortPath: string) {
  * @throws {Error} if something is not ok
  */
 export function checkSchema(jsonSchema: RxJsonSchema) {
-    // check _rev
+
+    if (!jsonSchema.hasOwnProperty('properties')) {
+        throw newRxError('SC29', {
+            schema: jsonSchema
+        });
+    }
+
+    // _rev MUST NOT exist, it is added by RxDB
     if (jsonSchema.properties._rev) {
         throw newRxError('SC10', {
             schema: jsonSchema

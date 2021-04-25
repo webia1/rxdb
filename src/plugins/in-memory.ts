@@ -15,7 +15,8 @@ import {
     filter,
     map,
     mergeMap,
-    first
+    first,
+    delay
 } from 'rxjs/operators';
 
 import type {
@@ -70,7 +71,10 @@ const BULK_DOC_OPTIONS_FALSE = {
     new_edits: false
 };
 
-export class InMemoryRxCollection<RxDocumentType, OrmMethods> extends RxCollectionBase<RxDocumentType, OrmMethods> {
+export
+    class InMemoryRxCollection<RxDocumentType, OrmMethods>
+    extends RxCollectionBase<RxDocumentType, OrmMethods> {
+
     constructor(
         parentCollection: RxCollection,
         pouchSettings = {}
@@ -290,7 +294,10 @@ export function setIndexes(
     return Promise.all(
         schema.indexes
             .map(indexAr => {
+                const indexName = 'idx-rxdb-' + indexAr.join(',');
                 return pouch.createIndex({
+                    ddoc: indexName,
+                    name: indexName,
                     index: {
                         fields: indexAr
                     }
@@ -319,6 +326,13 @@ export function streamChangedDocuments(
             include_docs: true
         }), 'change')
         .pipe(
+            /**
+             * we need this delay because with pouchdb 7.2.2
+             * it happened that _doNotEmitSet.add() from applyChangedDocumentToPouch()
+             * was called after the change was streamed downwards
+             * which then leads to a wrong detection
+             */
+            delay(0),
             map((changeAr: any) => changeAr[0]), // rxjs emits an array for whatever reason
             filter(change => {
                 // changes on the doNotEmit-list shell not be fired
@@ -404,6 +418,7 @@ export const prototypes = {
 };
 
 export const RxDBInMemoryPlugin: RxPlugin = {
+    name: 'in-memory',
     rxdb,
     prototypes
 };

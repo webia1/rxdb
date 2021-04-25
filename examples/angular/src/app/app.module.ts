@@ -1,7 +1,9 @@
+import { NgModule, APP_INITIALIZER } from '@angular/core';
 import { BrowserModule } from '@angular/platform-browser';
 import { FormsModule } from '@angular/forms';
 import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
-import { NgModule, APP_INITIALIZER } from '@angular/core';
+import { ServiceWorkerModule } from '@angular/service-worker';
+import { environment } from '../environments/environment';
 
 /**
  * COMPONENTS
@@ -26,25 +28,15 @@ import {
   initDatabase
 } from './services/database.service';
 
-/**
- * PIPES
- */
-import {
-  AsyncNoZonePipe
-} from './pipes/async-no-zone.pipe';
-import { ServiceWorkerModule } from '@angular/service-worker';
-import { environment } from '../environments/environment';
-
 @NgModule({
   declarations: [
     AppComponent,
     HeroesListComponent,
     HeroInsertComponent,
-    HeroEditComponent,
-    AsyncNoZonePipe
+    HeroEditComponent
   ],
   imports: [
-    BrowserModule,
+    BrowserModule.withServerTransition({ appId: 'serverApp' }),
     FormsModule,
     BrowserAnimationsModule,
     ServiceWorkerModule.register('ngsw-worker.js', { enabled: environment.production }),
@@ -61,12 +53,9 @@ import { environment } from '../environments/environment';
       multi: true,
       deps: [/* your dependencies */]
     },
-    DatabaseService,
-    AsyncNoZonePipe
+    DatabaseService
   ],
-  exports: [
-    AsyncNoZonePipe
-  ],
+  exports: [],
   bootstrap: [AppComponent]
 })
 export class AppModule { }

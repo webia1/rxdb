@@ -7,6 +7,10 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.RxDBLocalDocumentsPlugin = exports.overwritable = exports.prototypes = exports.rxdb = exports.RxLocalDocument = void 0;
 
+var _regenerator = _interopRequireDefault(require("@babel/runtime/regenerator"));
+
+var _asyncToGenerator2 = _interopRequireDefault(require("@babel/runtime/helpers/asyncToGenerator"));
+
 var _inheritsLoose2 = _interopRequireDefault(require("@babel/runtime/helpers/inheritsLoose"));
 
 var _objectPath = _interopRequireDefault(require("object-path"));
@@ -105,7 +109,9 @@ var RxLocalDocumentPrototype = {
   // overwrites
   //
   _handleChangeEvent: function _handleChangeEvent(changeEvent) {
-    if (changeEvent.documentId !== this.primary) return;
+    if (changeEvent.documentId !== this.primary) {
+      return;
+    }
 
     switch (changeEvent.operation) {
       case 'UPDATE':
@@ -208,10 +214,7 @@ var RxLocalDocumentPrototype = {
     return this.parentPouch.put(newData).then(function (res) {
       var endTime = (0, _util.now)();
       newData._rev = res.rev;
-
-      _this2._dataSync$.next(newData);
-
-      var changeEvent = new _rxChangeEvent.RxChangeEvent('UPDATE', _this2.id, (0, _util.clone)(_this2._data), (0, _rxDatabase.isInstanceOf)(_this2.parent) ? _this2.parent.token : _this2.parent.database.token, (0, _rxCollection.isInstanceOf)(_this2.parent) ? _this2.parent.name : null, true, startTime, endTime, oldData, _this2);
+      var changeEvent = new _rxChangeEvent.RxChangeEvent('UPDATE', _this2.id, (0, _util.clone)(newData), (0, _rxDatabase.isInstanceOf)(_this2.parent) ? _this2.parent.token : _this2.parent.database.token, (0, _rxCollection.isInstanceOf)(_this2.parent) ? _this2.parent.name : null, true, startTime, endTime, oldData, _this2);
 
       _this2.$emit(changeEvent);
     });
@@ -283,7 +286,10 @@ RxLocalDocument.create = function (id, data, parent) {
 function insertLocal(id, data) {
   var _this4 = this;
 
-  if ((0, _rxCollection.isInstanceOf)(this) && this._isInMemory) return this._parentCollection.insertLocal(id, data);
+  if ((0, _rxCollection.isInstanceOf)(this) && this._isInMemory) {
+    return this._parentCollection.insertLocal(id, data);
+  }
+
   data = (0, _util.clone)(data);
   return this.getLocal(id).then(function (existing) {
     if (existing) {
@@ -298,11 +304,17 @@ function insertLocal(id, data) {
 
     var saveData = (0, _util.clone)(data);
     saveData._id = _util.LOCAL_PREFIX + id;
-    return pouch.put(saveData);
-  }).then(function (res) {
-    data._rev = res.rev;
-    var newDoc = RxLocalDocument.create(id, data, _this4);
-    return newDoc;
+    var startTime = (0, _util.now)();
+    return pouch.put(saveData).then(function (res) {
+      data._rev = res.rev;
+      var newDoc = RxLocalDocument.create(id, data, _this4);
+      var endTime = (0, _util.now)();
+      var changeEvent = new _rxChangeEvent.RxChangeEvent('INSERT', id, (0, _util.clone)(data), (0, _rxDatabase.isInstanceOf)(_this4) ? _this4.token : _this4.database.token, (0, _rxCollection.isInstanceOf)(_this4) ? _this4.name : '', true, startTime, endTime, undefined, newDoc);
+
+      _this4.$emit(changeEvent);
+
+      return newDoc;
+    });
   });
 }
 /**
@@ -314,13 +326,16 @@ function insertLocal(id, data) {
 function upsertLocal(id, data) {
   var _this5 = this;
 
-  if ((0, _rxCollection.isInstanceOf)(this) && this._isInMemory) return this._parentCollection.upsertLocal(id, data);
+  if ((0, _rxCollection.isInstanceOf)(this) && this._isInMemory) {
+    return this._parentCollection.upsertLocal(id, data);
+  }
+
   return this.getLocal(id).then(function (existing) {
     if (!existing) {
       // create new one
-      var doc = _this5.insertLocal(id, data);
+      var docPromise = _this5.insertLocal(id, data);
 
-      return doc;
+      return docPromise;
     } else {
       // update existing
       data._rev = existing._data._rev;
@@ -355,6 +370,121 @@ function getLocal(id) {
   });
 }
 
+function getLocal$(id) {
+  var _this7 = this;
+
+  return this.$.pipe((0, _operators.startWith)(null), (0, _operators.mergeMap)( /*#__PURE__*/function () {
+    var _ref = (0, _asyncToGenerator2["default"])( /*#__PURE__*/_regenerator["default"].mark(function _callee(cE) {
+      var doc;
+      return _regenerator["default"].wrap(function _callee$(_context) {
+        while (1) {
+          switch (_context.prev = _context.next) {
+            case 0:
+              if (!cE) {
+                _context.next = 4;
+                break;
+              }
+
+              return _context.abrupt("return", {
+                changeEvent: cE
+              });
+
+            case 4:
+              _context.next = 6;
+              return _this7.getLocal(id);
+
+            case 6:
+              doc = _context.sent;
+              return _context.abrupt("return", {
+                doc: doc
+              });
+
+            case 8:
+            case "end":
+              return _context.stop();
+          }
+        }
+      }, _callee);
+    }));
+
+    return function (_x) {
+      return _ref.apply(this, arguments);
+    };
+  }()), (0, _operators.mergeMap)( /*#__PURE__*/function () {
+    var _ref2 = (0, _asyncToGenerator2["default"])( /*#__PURE__*/_regenerator["default"].mark(function _callee2(changeEventOrDoc) {
+      var cE, doc;
+      return _regenerator["default"].wrap(function _callee2$(_context2) {
+        while (1) {
+          switch (_context2.prev = _context2.next) {
+            case 0:
+              if (!changeEventOrDoc.changeEvent) {
+                _context2.next = 17;
+                break;
+              }
+
+              cE = changeEventOrDoc.changeEvent;
+
+              if (!(!cE.isLocal || cE.documentId !== id)) {
+                _context2.next = 6;
+                break;
+              }
+
+              return _context2.abrupt("return", {
+                use: false
+              });
+
+            case 6:
+              if (!cE.rxDocument) {
+                _context2.next = 10;
+                break;
+              }
+
+              _context2.t0 = cE.rxDocument;
+              _context2.next = 13;
+              break;
+
+            case 10:
+              _context2.next = 12;
+              return _this7.getLocal(id);
+
+            case 12:
+              _context2.t0 = _context2.sent;
+
+            case 13:
+              doc = _context2.t0;
+              return _context2.abrupt("return", {
+                use: true,
+                doc: doc
+              });
+
+            case 15:
+              _context2.next = 18;
+              break;
+
+            case 17:
+              return _context2.abrupt("return", {
+                use: true,
+                doc: changeEventOrDoc.doc
+              });
+
+            case 18:
+            case "end":
+              return _context2.stop();
+          }
+        }
+      }, _callee2);
+    }));
+
+    return function (_x2) {
+      return _ref2.apply(this, arguments);
+    };
+  }()), (0, _operators.filter)(function (filterFlagged) {
+    return filterFlagged.use;
+  }), (0, _operators.map)(function (filterFlagged) {
+    return filterFlagged.doc;
+  }));
+}
+
 var rxdb = true;
 exports.rxdb = rxdb;
 var prototypes = {
@@ -362,17 +492,20 @@ var prototypes = {
     proto.insertLocal = insertLocal;
     proto.upsertLocal = upsertLocal;
     proto.getLocal = getLocal;
+    proto.getLocal$ = getLocal$;
   },
   RxDatabase: function RxDatabase(proto) {
     proto.insertLocal = insertLocal;
     proto.upsertLocal = upsertLocal;
     proto.getLocal = getLocal;
+    proto.getLocal$ = getLocal$;
   }
 };
 exports.prototypes = prototypes;
 var overwritable = {};
 exports.overwritable = overwritable;
 var RxDBLocalDocumentsPlugin = {
+  name: 'local-documents',
   rxdb: rxdb,
   prototypes: prototypes,
   overwritable: overwritable

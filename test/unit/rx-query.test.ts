@@ -7,21 +7,32 @@ import {
     first
 } from 'rxjs/operators';
 
-import {
-    isRxQuery,
-    createRxDatabase
-} from '../../';
 import * as humansCollection from './../helper/humans-collection';
 import * as schemaObjects from '../helper/schema-objects';
 import * as schemas from './../helper/schemas';
 
 import {
+    isRxQuery,
+    createRxDatabase,
     RxJsonSchema,
     promiseWait,
     randomCouchString
-} from '../../';
+} from '../../plugins/core';
 
 config.parallel('rx-query.test.js', () => {
+    describe('.constructor', () => {
+        it('should throw dev-mode error on wrong query object', async () => {
+            const col = await humansCollection.create(0);
+
+            await AsyncTestUtil.assertThrows(
+                () => col.find({ foo: 'bar' } as any),
+                'RxTypeError',
+                'no valid query params'
+            );
+
+            col.database.destroy();
+        });
+    });
     describe('.toJSON()', () => {
         it('should produce the correct selector-object', async () => {
             const col = await humansCollection.create(0);
@@ -59,6 +70,19 @@ config.parallel('rx-query.test.js', () => {
                 .sort('-age');
             const str = q.toString();
             const mustString = '{"op":"find","other":{"queryBuilderPath":"age"},"query":{"limit":10,"selector":{"_id":{},"age":{"$gt":18,"$lt":67},"name":{"$ne":"Alice"}},"sort":[{"age":"desc"}]}}';
+            assert.strictEqual(str, mustString);
+            const str2 = q.toString();
+            assert.strictEqual(str2, mustString);
+
+            col.database.destroy();
+        });
+        it('should get a valid string-representation with two sort params', async () => {
+            const col = await humansCollection.createAgeIndex();
+            const q = col.find().sort({
+                passportId: 'desc', age: 'desc'
+            });
+            const str = q.toString();
+            const mustString = '{"op":"find","other":{},"query":{"selector":{"_id":{}},"sort":[{"passportId":"desc"},{"age":"desc"}]}}';
             assert.strictEqual(str, mustString);
             const str2 = q.toString();
             assert.strictEqual(str2, mustString);
@@ -959,11 +983,15 @@ config.parallel('rx-query.test.js', () => {
             });
 
             await col.pouch.createIndex({
+                name: 'idx-rxdb-info',
+                ddoc: 'idx-rxdb-info',
                 index: {
                     fields: ['info']
                 }
             });
             await col.pouch.createIndex({
+                name: 'idx-rxdb-info.title',
+                ddoc: 'idx-rxdb-info.title',
                 index: {
                     fields: ['info.title']
                 }
@@ -1417,6 +1445,61 @@ config.parallel('rx-query.test.js', () => {
             assert.strictEqual(myDocument.age, 58);
 
             collection.database.destroy();
+        });
+        /**
+        * via gitter @sfordjasiri 27.8.2020 10:27
+        */
+        it('gitter: mutating find-params causes different results', async () => {
+            const db = await createRxDatabase({
+                name: randomCouchString(10),
+                adapter: 'memory',
+                eventReduce: false
+            });
+            const schema = clone(schemas.human);
+            schema.keyCompression = false;
+
+            const c = await db.collection({
+                name: 'humans',
+                schema
+            });
+
+            const docDataMatching = schemaObjects.human();
+            docDataMatching.age = 42;
+            await c.insert(docDataMatching);
+
+            const docDataNotMatching = schemaObjects.human();
+            docDataNotMatching.age = 99;
+            await c.insert(docDataNotMatching);
+
+            const queryParams = {
+                selector: {
+                    age: 42
+                }
+            };
+            const queryMatching = c.find(queryParams);
+            const queryMatchingOne = c.findOne(queryParams);
+
+            const res1 = await queryMatching.exec();
+            const resOne1 = await queryMatchingOne.exec();
+            assert.strictEqual(res1.length, 1);
+            assert.ok(resOne1);
+            assert.strictEqual(resOne1.age, 42);
+
+            queryParams.selector.age = 0;
+
+            // trigger a write so the results are not cached
+            const addData = schemaObjects.human();
+            addData.age = 55;
+            await c.insert(addData);
+
+            const res2 = await queryMatching.exec();
+            const resOne2 = await queryMatchingOne.exec();
+
+            assert.strictEqual(res2.length, 1);
+            assert.ok(res2);
+            assert.strictEqual(resOne2.age, 42);
+
+            db.destroy();
         });
     });
 });

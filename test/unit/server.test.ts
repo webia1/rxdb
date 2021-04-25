@@ -8,7 +8,7 @@ import {
     createRxDatabase,
     addRxPlugin,
     randomCouchString
-} from '../../';
+} from '../../plugins/core';
 import * as humansCollection from '../helper/humans-collection';
 import * as schemaObjects from '../helper/schema-objects';
 import * as schemas from '../helper/schemas';
@@ -22,8 +22,8 @@ config.parallel('server.test.js', () => {
 
     const NodeWebsqlAdapter = require('pouchdb-adapter-leveldb');
 
-    const ServerPlugin = require('../../plugins/server');
-    addRxPlugin(ServerPlugin);
+    const { RxDBServerPlugin } = require('../../plugins/server');
+    addRxPlugin(RxDBServerPlugin);
 
     let lastPort = 3000;
     const nexPort = () => lastPort++;
@@ -36,7 +36,6 @@ config.parallel('server.test.js', () => {
             path: '/db',
             port
         });
-
 
         // check access to path
         const colUrl = 'http://localhost:' + port + '/db/human';
@@ -154,7 +153,7 @@ config.parallel('server.test.js', () => {
                             JSON.stringify(response.headers, null, 2)
                         )
                     );
-                } else res();
+                } else res(null);
             });
         });
 
@@ -199,7 +198,7 @@ config.parallel('server.test.js', () => {
                             JSON.stringify(response.headers, null, 2)
                         )
                     );
-                } else res();
+                } else res(null);
             });
         });
 
@@ -368,9 +367,10 @@ config.parallel('server.test.js', () => {
             adapter: 'memory',
             multiInstance: false
         });
-        db1.server({
+        const res = db1.server({
             port
         });
+        await res.startupPromise;
         await AsyncTestUtil.assertThrows(
             () => db1.collection({
                 name: 'human',
@@ -381,6 +381,47 @@ config.parallel('server.test.js', () => {
         );
 
         db1.destroy();
+    });
+    it('should reject startupPromise when port is already used', async () => {
+        const port = nexPort();
+        const db1 = await createRxDatabase({
+            name: randomCouchString(10),
+            adapter: 'memory',
+            multiInstance: false
+        });
+        const res1 = db1.server({
+            port
+        });
+        await res1.startupPromise;
+
+        // wait until started up
+        await AsyncTestUtil.waitUntil(async () => {
+            try {
+                const gotJson = await request('http://localhost:' + port + '/db/');
+                JSON.parse(gotJson);
+                return true;
+            } catch (err) {
+                return false;
+            }
+        });
+
+        const db2 = await createRxDatabase({
+            name: randomCouchString(10),
+            adapter: 'memory',
+            multiInstance: false
+        });
+        const res2 = db2.server({ port });
+
+        let hasThrown = false;
+        try {
+            await res2.startupPromise;
+        } catch (err) {
+            hasThrown = true;
+        }
+        assert.ok(hasThrown);
+
+        db1.destroy();
+        db2.destroy();
     });
     describe('issues', () => {
         describe('#1447 server path not working', () => {
@@ -434,6 +475,32 @@ config.parallel('server.test.js', () => {
                 assert.strictEqual(got.doc_count, 1);
 
                 serverCollection.database.destroy();
+            });
+            it('having a collection with leveldb and no doc, will not make sync working', async function () {
+                const dbName = config.rootPath + 'test_tmp/' + randomCouchString(10);
+                const db = await createRxDatabase({
+                    name: dbName,
+                    adapter: 'leveldb',
+                    multiInstance: false
+                });
+                const col = await db.collection({
+                    name: 'human',
+                    schema: schemas.human
+                });
+                const port = nexPort();
+                await db.server({
+                    port
+                });
+                await AsyncTestUtil.waitUntil(async () => {
+                    try {
+                        const gotJson = await request('http://localhost:' + port + '/db/' + col.name);
+                        const got = JSON.parse(gotJson);
+                        return !!got.doc_count;
+                    } catch (err) {
+                        return false;
+                    }
+                });
+                db.destroy();
             });
         });
     });

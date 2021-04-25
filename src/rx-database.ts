@@ -14,13 +14,17 @@ import type {
     ServerOptions,
     RxDatabaseCreator,
     RxDumpDatabase,
-    RxDumpDatabaseAny
+    RxDumpDatabaseAny,
+    RxCollectionCreatorBase,
+    AllMigrationStates,
+    ServerResponse
 } from './types';
 
 import {
     promiseWait,
     pluginMissing,
-    LOCAL_PREFIX
+    LOCAL_PREFIX,
+    flatClone
 } from './util';
 import {
     newRxError
@@ -179,7 +183,114 @@ export class RxDatabaseBase<
     }
 
     /**
+     * creates multiple RxCollections at once
+     * to be much faster by saving db txs and doing stuff in bulk-operations
+     * This function is not called often, but mostly in the critical path at the initial page load
+     * So it must be as fast as possible
+     */
+    async addCollections(collectionCreators: {
+        // TODO instead of [name: string] only allow keyof Collections
+        [name: string]: RxCollectionCreatorBase
+    }): Promise<{ [key: string]: RxCollection }> {
+        const pouch: PouchDBInstance = this.internalStore as any;
+
+        // get local management docs in bulk request
+        const result = await pouch.allDocs({
+            include_docs: true,
+            keys: Object.keys(collectionCreators).map(name => _collectionNamePrimary(name, collectionCreators[name].schema))
+        });
+        const internalDocByCollectionName: any = {};
+        result.rows.forEach(row => {
+            if (!row.error) {
+                internalDocByCollectionName[row.key] = row.doc;
+            }
+        });
+
+        const schemaHashByName: { [k: string]: string } = {};
+        const collections = await Promise.all(
+            Object.entries(collectionCreators).map(([name, args]) => {
+                const internalDoc = internalDocByCollectionName[_collectionNamePrimary(name, collectionCreators[name].schema)];
+                const useArgs: RxCollectionCreator = flatClone(args) as any;
+                useArgs.name = name;
+                const schema = createRxSchema(args.schema);
+                schemaHashByName[name] = schema.hash;
+                (useArgs as any).schema = schema;
+                (useArgs as any).database = this;
+
+                // TODO check if already exists and schema hash has changed
+
+                // collection already exists
+                if ((this.collections as any)[name]) {
+                    throw newRxError('DB3', {
+                        name
+                    });
+                }
+
+                // collection already exists but has different schema
+                if (internalDoc && internalDoc.schemaHash !== schemaHashByName[name]) {
+                    throw newRxError('DB6', {
+                        name: name,
+                        previousSchemaHash: internalDoc.schemaHash,
+                        schemaHash: schemaHashByName[name]
+                    });
+                }
+
+                // run hooks
+                const hookData: RxCollectionCreator = flatClone(args) as any;
+                (hookData as any).database = this;
+                hookData.name = name;
+                runPluginHooks('preCreateRxCollection', hookData);
+
+                return createRxCollection(useArgs, !!internalDoc);
+            })
+        );
+
+        const bulkPutDocs: any[] = [];
+        const ret: { [key: string]: RxCollection } = {};
+        collections.forEach(collection => {
+            const name = collection.name;
+            ret[name] = collection;
+            if (
+                collection.schema.crypt &&
+                !this.password
+            ) {
+                throw newRxError('DB7', {
+                    name
+                });
+            }
+
+            // add to bulk-docs list
+            if (!internalDocByCollectionName[name]) {
+                bulkPutDocs.push({
+                    _id: _collectionNamePrimary(name, collectionCreators[name].schema),
+                    schemaHash: schemaHashByName[name],
+                    schema: collection.schema.normalized,
+                    version: collection.schema.version
+                });
+            }
+
+            // set as getter to the database
+            (this.collections as any)[name] = collection;
+            if (!(this as any)[name]) {
+                Object.defineProperty(this, name, {
+                    get: () => (this.collections as any)[name]
+                });
+            }
+        });
+
+        // make a single call to the pouchdb instance
+        if (bulkPutDocs.length > 0) {
+            await pouch.bulkDocs({
+                docs: bulkPutDocs,
+            });
+        }
+
+        return ret;
+    }
+
+    /**
      * create or fetch a collection
+     * @deprecated use addCollections() instead, it is faster and better typed
      */
     collection<
         RxDocumentType = any,
@@ -192,104 +303,16 @@ export class RxDatabaseBase<
             StaticMethods
         >
     > {
-        if (typeof args === 'string')
+        if (typeof args === 'string') {
             return Promise.resolve(this.collections[args]);
-
-        args = Object.assign({}, args);
-
-        (args as any).database = this;
-
-        runPluginHooks('preCreateRxCollection', args);
-
-        if (args.name.charAt(0) === '_') {
-            throw newRxError('DB2', {
-                name: args.name
-            });
-        }
-        if ((this.collections as any)[args.name]) {
-            throw newRxError('DB3', {
-                name: args.name
-            });
-        }
-        if (!args.schema) {
-            throw newRxError('DB4', {
-                name: args.name,
-                args
-            });
         }
 
-        const internalPrimary = _collectionNamePrimary(args.name, args.schema);
-
-        const schema = createRxSchema(args.schema);
-        args.schema = schema as any;
-
-        // check schemaHash
-        const schemaHash = schema.hash;
-
-        let colDoc: any;
-        let col: any;
-        return this.lockedRun(
-            () => (this.internalStore as any).get(internalPrimary)
-        )
-            .catch(() => null)
-            .then((collectionDoc: any) => {
-                colDoc = collectionDoc;
-
-                if (collectionDoc && collectionDoc.schemaHash !== schemaHash) {
-                    // collection already exists with different schema, check if it has documents
-                    const pouch = this._spawnPouchDB(args.name, args.schema.version, args.pouchSettings);
-                    return pouch.find({
-                        selector: {
-                            _id: {}
-                        },
-                        limit: 1
-                    }).then(oneDoc => {
-                        if (oneDoc.docs.length !== 0) {
-                            // we have one document
-                            throw newRxError('DB6', {
-                                name: args.name,
-                                previousSchemaHash: collectionDoc.schemaHash,
-                                schemaHash
-                            });
-                        }
-                        return collectionDoc;
-                    });
-                } else return collectionDoc;
-            })
-            .then(() => createRxCollection(args as any))
-            .then((collection: RxCollection) => {
-                col = collection;
-                if (
-                    collection.schema.crypt &&
-                    !this.password
-                ) {
-                    throw newRxError('DB7', {
-                        name: args.name
-                    });
-                }
-
-                if (!colDoc) {
-                    return this.lockedRun(
-                        () => (this.internalStore as any).put({
-                            _id: internalPrimary,
-                            schemaHash,
-                            schema: collection.schema.normalized,
-                            version: collection.schema.version
-                        })
-                    ).catch(() => { });
-                }
-            })
-            .then(() => {
-                (this.collections as any)[args.name] = col;
-
-                if (!(this as any)[args.name]) {
-                    Object.defineProperty(this, args.name, {
-                        get: () => (this.collections as any)[args.name]
-                    });
-                }
-
-                return col;
-            });
+        // collection() is deprecated, call new bulk-creation method
+        return this.addCollections({
+            [args.name]: args
+        }).then(colObject => {
+            return colObject[args.name] as any;
+        });
     }
 
     /**
@@ -352,11 +375,7 @@ export class RxDatabaseBase<
     /**
      * spawn server
      */
-    server(_options?: ServerOptions): {
-        app: any;
-        pouchApp: any;
-        server: any;
-    } {
+    server(_options?: ServerOptions): ServerResponse {
         throw pluginMissing('server');
     }
 
@@ -374,6 +393,10 @@ export class RxDatabaseBase<
         throw pluginMissing('leader-election');
     }
 
+    public migrationStates(): Observable<AllMigrationStates> {
+        throw pluginMissing('migration');
+    }
+
     /**
      * destroys the database-instance and all collections
      */
@@ -383,22 +406,18 @@ export class RxDatabaseBase<
         DB_COUNT--;
         this.destroyed = true;
 
-        if (this.broadcastChannel) {
-            /**
-             * The broadcast-channel gets closed lazy
-             * to ensure that all pending change-events
-             * get emitted
-             */
-            setTimeout(() => (this.broadcastChannel as any).close(), 1000);
-        }
-
         this._subs.map(sub => sub.unsubscribe());
 
-        // destroy all collections
-        return Promise.all(Object.keys(this.collections)
-            .map(key => (this.collections as any)[key])
-            .map(col => col.destroy())
-        )
+        // first wait until db is idle
+        return this.requestIdlePromise()
+            // destroy all collections
+            .then(() => Promise.all(
+                Object.keys(this.collections)
+                    .map(key => (this.collections as any)[key])
+                    .map(col => col.destroy())
+            ))
+            // close broadcastChannel if exists
+            .then(() => this.broadcastChannel ? this.broadcastChannel.close() : Promise.resolve())
             // remove combination from USED_COMBINATIONS-map
             .then(() => _removeUsedCombination(this.name, this.adapter))
             .then(() => true);

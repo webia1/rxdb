@@ -13,6 +13,7 @@ import {
     RxAttachment,
     RxAttachmentCreator
 } from './rx-attachment';
+import { WithPouchMeta } from './pouch';
 
 export type RxDocument<RxDocumentType = {}, OrmMethods = {}> = RxDocumentBase<RxDocumentType, OrmMethods> & RxDocumentType & OrmMethods;
 
@@ -34,7 +35,7 @@ export declare interface RxDocumentBase<RxDocumentType, OrmMethods = {}> {
     // internal things
     _isTemporary: boolean;
     _dataSync$: BehaviorSubject<RxDocumentType>;
-    _data: any;
+    _data: WithPouchMeta<RxDocumentType>;
     _deleted$: BehaviorSubject<boolean>;
     primaryPath: string;
     revision: string;
@@ -47,9 +48,23 @@ export declare interface RxDocumentBase<RxDocumentType, OrmMethods = {}> {
     get(objPath: string): any;
     populate(objPath: string): Promise<RxDocument<RxDocumentType, OrmMethods> | any | null>;
 
-    // change data of document
-    atomicUpdate(fun: AtomicUpdateFunction<RxDocumentType>): Promise<RxDocument<RxDocumentType, OrmMethods>>;
+    /**
+     * mutate the document with a function
+     */
+    atomicUpdate(mutationFunction: AtomicUpdateFunction<RxDocumentType>): Promise<RxDocument<RxDocumentType, OrmMethods>>;
+    /**
+     * patches the given properties
+     */
+    atomicPatch(patch: Partial<RxDocumentType>): Promise<RxDocument<RxDocumentType, OrmMethods>>;
+
+    /**
+     * @deprecated use atomicPatch or atomicUpdate instead
+     * because it is better works with typescript
+     */
     atomicSet(objPath: string, value: any): Promise<RxDocument<RxDocumentType, OrmMethods>>;
+
+
+
     update(updateObj: any): Promise<any>;
     remove(): Promise<boolean>;
     _handleChangeEvent(cE: any): void;
@@ -59,18 +74,29 @@ export declare interface RxDocumentBase<RxDocumentType, OrmMethods = {}> {
     save(): Promise<boolean>;
 
     // attachments
-    putAttachment(creator: RxAttachmentCreator): Promise<RxAttachment<RxDocumentType, OrmMethods>>;
+    putAttachment(
+        creator: RxAttachmentCreator,
+        /**
+         * If set to true and data is equal,
+         * operation will be skipped.
+         * This prevents us from upgrading the revision
+         * and causing events in the change stream.
+         */
+        skipIfSame?: boolean
+    ): Promise<RxAttachment<RxDocumentType, OrmMethods>>;
     getAttachment(id: string): RxAttachment<RxDocumentType, OrmMethods> | null;
     allAttachments(): RxAttachment<RxDocumentType, OrmMethods>[];
 
-    toJSON(): RxDocumentTypeWithRev<RxDocumentType>;
+    toJSON(): RxDocumentType;
     toJSON(withRevAndAttachments: true): RxDocumentTypeWithRev<RxDocumentType>;
     toJSON(withRevAndAttachments: false): RxDocumentType;
 
     destroy(): void;
 }
 
-export declare interface RxLocalDocument<Parent> extends RxDocumentBase<{}> {
+declare type LocalDocWithType<LocalDocType> = RxDocumentBase<LocalDocType> & LocalDocType;
+
+export declare type RxLocalDocument<Parent, LocalDocType = any> = RxDocumentBase<LocalDocType> & LocalDocType & {
     readonly parent: Parent;
     isLocal(): true;
 }

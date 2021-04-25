@@ -14,7 +14,7 @@ import {
     isRxDocument,
     promiseWait,
     randomCouchString
-} from '../../';
+} from '../../plugins/core';
 
 config.parallel('hooks.test.js', () => {
     describe('get/set', () => {
@@ -177,6 +177,19 @@ config.parallel('hooks.test.js', () => {
                         count++;
                     }, true);
                     await c.insert(human);
+                    assert.strictEqual(count, 1);
+                    c.database.destroy();
+                });
+                it('should call post insert hook after bulkInsert', async () => {
+                    const c = await humansCollection.create(0);
+                    const human = schemaObjects.human();
+                    let count = 0;
+                    c.postInsert((data, instance) => {
+                        assert.ok(data.age);
+                        assert.ok(isRxDocument(instance));
+                        count++;
+                    }, false);
+                    await c.bulkInsert([human]);
                     assert.strictEqual(count, 1);
                     c.database.destroy();
                 });
@@ -354,6 +367,23 @@ config.parallel('hooks.test.js', () => {
                     assert.strictEqual(doc2.get('passportId'), human.passportId);
                     c.database.destroy();
                 });
+                it('should call pre remove hook before bulkRemove', async () => {
+                    const c = await humansCollection.create(5);
+                    const docList = await c.find().exec();
+                    const primaryList = docList.map(doc => doc.primary);
+
+                    let count = 0;
+                    c.preRemove((data, instance) => {
+                        assert.ok(isRxDocument(instance));
+                        assert.ok(data.age);
+                        count++;
+                    }, true);
+
+                    await c.bulkRemove(primaryList);
+                    assert.strictEqual(count, 5);
+
+                    c.database.destroy();
+                });
             });
             describe('negative', () => { });
         });
@@ -401,6 +431,22 @@ config.parallel('hooks.test.js', () => {
                     await doc.remove();
 
                     assert.ok(hasRun);
+                    c.database.destroy();
+                });
+                it('should call post remove hook after bulkRemove', async () => {
+                    const c = await humansCollection.create(5);
+                    const docList = await c.find().exec();
+                    const primaryList = docList.map(doc => doc.primary);
+
+                    let count = 0;
+                    c.postRemove((data, instance) => {
+                        assert.ok(isRxDocument(instance));
+                        assert.ok(data.age);
+                        count++;
+                    }, true);
+                    await c.bulkRemove(primaryList);
+                    assert.strictEqual(count, 5);
+
                     c.database.destroy();
                 });
             });

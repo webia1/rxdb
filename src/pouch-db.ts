@@ -8,6 +8,7 @@ import PouchDBCore from 'pouchdb-core';
 
 // pouchdb-find
 import PouchDBFind from 'pouchdb-find';
+import { binaryMd5 } from 'pouchdb-md5';
 
 PouchDBCore.plugin(PouchDBFind);
 
@@ -82,6 +83,10 @@ export function isLevelDown(adapter: any) {
     }
 }
 
+
+const validCouchDBStringRegexStr = '^[a-z][_$a-z0-9]*$';
+const validCouchDBStringRegex = new RegExp(validCouchDBStringRegexStr);
+
 /**
  * validates that a given string is ok to be used with couchdb-collection-names
  * @link https://wiki.apache.org/couchdb/HTTP_database_API
@@ -104,11 +109,9 @@ export function validateCouchDBString(name: string): true {
     }
 
 
-    const regStr = '^[a-z][_$a-z0-9]*$';
-    const reg = new RegExp(regStr);
-    if (!name.match(reg)) {
+    if (!name.match(validCouchDBStringRegex)) {
         throw newRxError('UT2', {
-            regex: regStr,
+            regex: validCouchDBStringRegexStr,
             givenName: name,
         });
     }
@@ -135,6 +138,19 @@ export function pouchReplicationFunction(
             push
         });
     }
+}
+
+
+/**
+ * create the same diggest as an attachment with that data
+ * would have
+ */
+export function pouchAttachmentBinaryHash(data: any): Promise<string> {
+    return new Promise(res => {
+        binaryMd5(data, (d: any) => {
+            res('md5-' + d);
+        });
+    });
 }
 
 export function isInstanceOf(obj: any) {

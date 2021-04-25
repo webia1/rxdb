@@ -7,7 +7,7 @@ import config from './unit/config';
 import AsyncTestUtil from 'async-test-util';
 
 describe('typings.test.js', function () {
-    this.timeout(180 * 1000); // tests can take very long on slow devices like the CI
+    this.timeout(120 * 1000); // tests can take very long on slow devices like the CI
     const codeBase = `
         import {
             createRxDatabase,
@@ -24,6 +24,8 @@ describe('typings.test.js', function () {
         } from '${config.rootPath}';
         import * as PouchMemAdapter from 'pouchdb-adapter-memory';
         addRxPlugin(PouchMemAdapter);
+        const PouchHttpAdapter = require('pouchdb-adapter-http');
+        addRxPlugin(PouchHttpAdapter);
 
         type DefaultDocType = {
             passportId: string;
@@ -44,12 +46,24 @@ describe('typings.test.js', function () {
             isolatedModules: false
         };
         const promise = spawn('ts-node', [
-            '--compiler-options', JSON.stringify(tsConfig),
+            '--compiler-options',
+            JSON.stringify(tsConfig),
             '-e', code
         ]);
         const childProcess = promise.childProcess;
-        childProcess.stdout.on('data', (data: any) => stdout.push(data.toString()));
-        childProcess.stderr.on('data', (data: any) => stderr.push(data.toString()));
+        const debug = false;
+        childProcess.stdout.on('data', (data: any) => {
+            if (debug) {
+                console.log(data.toString());
+            }
+            stdout.push(data.toString());
+        });
+        childProcess.stderr.on('data', (data: any) => {
+            if (debug) {
+                console.error('error: ' + data.toString());
+            }
+            stderr.push(data.toString());
+        });
         try {
             await promise;
         } catch (err) {
@@ -72,7 +86,8 @@ describe('typings.test.js', function () {
             `;
             let thrown = false;
             try {
-                await transpileCode(brokenCode);
+               const code = await transpileCode(brokenCode);
+               console.dir(code);
             } catch (err) {
                 thrown = true;
             }
@@ -115,7 +130,6 @@ describe('typings.test.js', function () {
                             foobar: RxCollection
                         }>;
                         const col: RxCollection = db.foobar;
-                        await db.destroy();
                     })();
                 `;
                 await transpileCode(code);
@@ -134,7 +148,6 @@ describe('typings.test.js', function () {
                     (async() => {
                         const db: RxDatabase = {} as RxDatabase;
                         const col: RxCollection = db.foobar;
-                        await db.destroy();
                     })();
                 `;
                 await transpileCode(code);
@@ -160,7 +173,7 @@ describe('typings.test.js', function () {
         });
         describe('negative', () => {
             it('should not allow additional parameters', async () => {
-                const brokenCode = `
+                const brokenCode = codeBase + `
                     const databaseCreator: RxDatabaseCreator = {
                         name: 'mydb',
                         adapter: 'memory',
@@ -304,7 +317,10 @@ describe('typings.test.js', function () {
                         const myCollection: RxCollection<any, any, staticMethods> = await myDb.collection<any, any, staticMethods>({
                             name: 'humans',
                             schema: mySchema,
-                            autoMigrate: false
+                            autoMigrate: false,
+                            statics: {
+                                countAllDocuments: () => Promise.resolve(1)
+                            }
                         });
 
                         await myCollection.countAllDocuments();
@@ -396,10 +412,14 @@ describe('typings.test.js', function () {
                             remote: 'http://localhost:9090/'
                         });
                         const syncHandler = replicationState._pouchEventEmitterObject;
-                        if(!syncHandler) return;
+                        if(!syncHandler) {
+                            process.exit();
+                        }
                         syncHandler.on('paused', (anything: any) => {
 
                         });
+                        console.log('.4');
+                        process.exit();
                     })();
                 `;
                 await transpileCode(code);
@@ -445,7 +465,10 @@ describe('typings.test.js', function () {
                         const myCollection = await myDb.collection({
                             name: 'humans',
                             schema: mySchema,
-                            autoMigrate: false
+                            autoMigrate: false,
+                            statics: {
+                                countAllDocuments: () => 1
+                            }
                         });
 
                         await myCollection.countAllDocuments();
@@ -570,7 +593,7 @@ describe('typings.test.js', function () {
 
                     const result = await myCollection.findOne().exec();
                     if(!result) throw new Error('got no doc');
-                    const rev: string = result.toJSON()._rev;
+                    const rev: string = result.toJSON(true)._rev;
                 });
             `;
             await transpileCode(code);
@@ -636,6 +659,48 @@ describe('typings.test.js', function () {
             await transpileCode(code);
         });
     });
+    config.parallel('local documents', () => {
+        it('should allow to type input data', async () => {
+            const code = codeBase + `
+            (async() => {
+                const myDb: RxDatabase = {} as any;
+                const typedLocalDoc = await myDb.getLocal<{foo: string;}>('foobar');
+                const typedLocalDocInsert = await myDb.insertLocal<{foo: string;}>('foobar', { bar: 'foo' });
+                const x: string = typedLocalDoc.foo;
+                const x2: string = typedLocalDocInsert.foo;
+            });
+            `;
+            await AsyncTestUtil.assertThrows(
+                () => transpileCode(code),
+                Error
+            );
+        });
+        it('should allow to type the return data', async () => {
+            const code = codeBase + `
+            (async() => {
+                const myDb: RxDatabase = {} as any;
+                const typedLocalDoc = await myDb.getLocal<{foo: string;}>('foobar');
+                const typedLocalDocUpsert = await myDb.upsertLocal<{foo: string;}>('foobar', { foo: 'bar' });
+                const x: string = typedLocalDoc.foo;
+                const x2: string = typedLocalDocUpsert.foo;
+            });
+            `;
+            await transpileCode(code);
+        });
+        it('should allow to access differnt property', async () => {
+            const code = codeBase + `
+            (async() => {
+                const myDb: RxDatabase = {} as any;
+                const typedLocalDoc = await myDb.getLocal<{foo: string;}>('foobar');
+                const x: string = typedLocalDoc.bar;
+            });
+            `;
+            await AsyncTestUtil.assertThrows(
+                () => transpileCode(code),
+                Error
+            );
+        });
+    });
     config.parallel('other', () => {
         describe('orm', () => {
             it('should correctly recognize orm-methods', async () => {
@@ -659,9 +724,8 @@ describe('typings.test.js', function () {
                     });
 
                     const x: string = doc.foobar();
-
                 });
-            `;
+                `;
                 await transpileCode(code);
             });
         });
@@ -746,6 +810,7 @@ describe('typings.test.js', function () {
                 const code = codeBase + `
                 (async() => {
                     const myPlugin: RxPlugin = {
+                        name: 'my-plugin',
                         rxdb: true,
                         prototypes: {
                             RxDocument: () => {}

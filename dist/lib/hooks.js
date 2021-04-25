@@ -17,6 +17,12 @@ exports.HOOKS = void 0;
  */
 var HOOKS = {
   /**
+   * Runs before a plugin is added.
+   * Use this to block the usage of non-compatible plugins.
+   */
+  preAddRxPlugin: [],
+
+  /**
    * functions that run before the database is created
    */
   preCreateRxDatabase: [],
@@ -31,9 +37,15 @@ var HOOKS = {
   createRxCollection: [],
 
   /**
-   * functions that get the json-schema as input
-   * to do additionally checks/manipulation
-   */
+  * runs at the end of the destroy-process of a collection
+  * @async
+  */
+  postDestroyRxCollection: [],
+
+  /**
+    * functions that get the json-schema as input
+    * to do additionally checks/manipulation
+    */
   preCreateRxSchema: [],
 
   /**
@@ -41,6 +53,7 @@ var HOOKS = {
    * gets RxSchema as attribute
    */
   createRxSchema: [],
+  preCreateRxQuery: [],
   createRxQuery: [],
   createRxDocument: [],
 
@@ -87,6 +100,12 @@ function runPluginHooks(hookKey, obj) {
     return fun(obj);
   });
 }
+/**
+ * TODO
+ * we should not run the hooks in parallel
+ * this makes stuff unpredictable.
+ */
+
 
 function runAsyncPluginHooks(hookKey, obj) {
   return Promise.all(HOOKS[hookKey].map(function (fun) {

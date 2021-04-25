@@ -12,7 +12,7 @@ import {
     Subject,
     Observable
 } from 'rxjs';
-
+import deepEqual from 'deep-equal';
 import {
     countAllUndeleted,
     getBatch
@@ -20,41 +20,42 @@ import {
 import {
     clone,
     toPromise,
-    flatClone
+    flatClone,
+    getHeightOfRevision,
+    createRevision
 } from '../../util';
 import {
     createRxSchema
 } from '../../rx-schema';
 import {
+    RxError,
     newRxError
 } from '../../rx-error';
 import { overwritable } from '../../overwritable';
 import {
-    runPluginHooks,
     runAsyncPluginHooks
 } from '../../hooks';
 import type {
     RxCollection,
     RxDatabase,
     MigrationState,
-    PouchDBInstance,
-    NumberFunctionMap
+    NumberFunctionMap,
+    OldRxCollection,
+    WithAttachmentsData
 } from '../../types';
 import {
     RxSchema,
     getPreviousVersions
 } from '../../rx-schema';
-import type {
-    KeyCompressor
-} from '../key-compression';
 import {
-    Crypter,
     createCrypter
 } from '../../crypter';
 import {
     _handleToPouch,
     _handleFromPouch
 } from '../../rx-collection-helper';
+import { getMigrationStateByDatabase, MigrationStateWithCollection } from './migration-state';
+import { map } from 'rxjs/operators';
 
 export class DataMigrator {
 
@@ -75,8 +76,9 @@ export class DataMigrator {
     private _migrated: boolean = false;
     private _migratePromise?: Promise<any>;
     migrate(batchSize: number = 10): Observable<MigrationState> {
-        if (this._migrated)
+        if (this._migrated) {
             throw newRxError('DM1');
+        }
         this._migrated = true;
 
         const state = {
@@ -88,7 +90,15 @@ export class DataMigrator {
             percent: 0 // percentage
         };
 
-        const observer: Subject<MigrationState> = new Subject();
+        const stateSubject: Subject<MigrationStateWithCollection> = new Subject();
+
+        /**
+         * Add to output of RxDatabase.migrationStates
+         */
+        const allSubject = getMigrationStateByDatabase(this.newestCollection.database);
+        const allList = allSubject.getValue().slice(0);
+        allList.push(stateSubject.asObservable());
+        allSubject.next(allList);
 
         /**
          * TODO this is a side-effect which might throw
@@ -96,7 +106,7 @@ export class DataMigrator {
          * @link https://github.com/ReactiveX/rxjs/issues/4074
          */
         (() => {
-            let oldCols: OldCollection[];
+            let oldCols: OldRxCollection[];
             return _getOldCollections(this)
                 .then(ret => {
                     oldCols = ret;
@@ -109,7 +119,10 @@ export class DataMigrator {
                     const totalCount: number = countAll
                         .reduce((cur, prev) => prev = cur + prev, 0);
                     state.total = totalCount;
-                    observer.next(flatClone(state));
+                    stateSubject.next({
+                        collection: this.newestCollection,
+                        state: flatClone(state)
+                    });
                     let currentCol = oldCols.shift();
 
                     let currentPromise = Promise.resolve();
@@ -125,11 +138,14 @@ export class DataMigrator {
                                         state.handled++;
                                         (state as any)[subState.type] = (state as any)[subState.type] + 1;
                                         state.percent = Math.round(state.handled / state.total * 100);
-                                        observer.next(flatClone(state));
+                                        stateSubject.next({
+                                            collection: this.newestCollection,
+                                            state: flatClone(state)
+                                        });
                                     },
                                     (e: any) => {
                                         sub.unsubscribe();
-                                        observer.error(e);
+                                        stateSubject.error(e);
                                     }, () => {
                                         sub.unsubscribe();
                                         res();
@@ -143,14 +159,20 @@ export class DataMigrator {
                 .then(() => {
                     state.done = true;
                     state.percent = 100;
-                    observer.next(flatClone(state));
-                    observer.complete();
+                    stateSubject.next({
+                        collection: this.newestCollection,
+                        state: flatClone(state)
+                    });
+                    stateSubject.complete();
                 });
         })();
 
 
-        return observer.asObservable();
+        return stateSubject.pipe(
+            map(withCollection => withCollection.state)
+        );
     }
+
     migratePromise(batchSize: number): Promise<any> {
         if (!this._migratePromise) {
             this._migratePromise = mustMigrate(this)
@@ -158,7 +180,7 @@ export class DataMigrator {
                     if (!must) return Promise.resolve(false);
                     else return new Promise((res, rej) => {
                         const state$ = this.migrate(batchSize);
-                        state$['subscribe'](null, rej, res);
+                        (state$ as any).subscribe(null, rej, res);
                     });
                 });
         }
@@ -166,27 +188,14 @@ export class DataMigrator {
     }
 }
 
-export interface OldCollection {
-    version: number;
-    schema: RxSchema;
-    pouchdb: PouchDBInstance;
-    dataMigrator: DataMigrator;
-    _crypter: Crypter;
-    _keyCompressor?: KeyCompressor;
-    newestCollection: RxCollection;
-    database: RxDatabase;
-    _migrate?: boolean;
-    _migratePromise?: Promise<any>;
-}
-
 export function createOldCollection(
     version: number,
     schemaObj: any,
     dataMigrator: DataMigrator
-): OldCollection {
+): OldRxCollection {
     const database = dataMigrator.newestCollection.database;
     const schema = createRxSchema(schemaObj, false);
-    const ret: OldCollection = {
+    const ret: OldRxCollection = {
         version,
         dataMigrator,
         newestCollection: dataMigrator.newestCollection,
@@ -215,7 +224,7 @@ export function createOldCollection(
  */
 export function _getOldCollections(
     dataMigrator: DataMigrator
-): Promise<OldCollection[]> {
+): Promise<OldRxCollection[]> {
     return Promise
         .all(
             getPreviousVersions(dataMigrator.currentSchema.jsonSchema)
@@ -256,25 +265,28 @@ export function createDataMigrator(
     return new DataMigrator(newestCollection, migrationStrategies);
 }
 
-export function _runStrategyIfNotNull(
-    oldCollection: OldCollection,
+export function runStrategyIfNotNull(
+    oldCollection: OldRxCollection,
     version: number,
     docOrNull: any | null
-): Promise<object | null> {
+): Promise<any | null> {
     if (docOrNull === null) {
         return Promise.resolve(null);
     } else {
-        const ret = oldCollection.dataMigrator.migrationStrategies[version](docOrNull);
+        const ret = oldCollection.dataMigrator.migrationStrategies[version](docOrNull, oldCollection);
         const retPromise = toPromise(ret);
         return retPromise;
     }
 }
 
 export function getBatchOfOldCollection(
-    oldCollection: OldCollection,
+    oldCollection: OldRxCollection,
     batchSize: number
 ): Promise<any[]> {
-    return getBatch(oldCollection.pouchdb, batchSize)
+    return getBatch(
+        oldCollection.pouchdb,
+        batchSize
+    )
         .then(docs => docs
             .map(doc => _handleFromPouch(oldCollection, doc))
         );
@@ -287,17 +299,26 @@ export function getBatchOfOldCollection(
  * @return final object or null if migrationStrategy deleted it
  */
 export function migrateDocumentData(
-    oldCollection: OldCollection,
+    oldCollection: OldRxCollection,
     docData: any
 ): Promise<any | null> {
-    docData = clone(docData);
+
+    /**
+     * We cannot deep-clone Blob or Buffer
+     * so we just flat clone it here
+     * and attach it to the deep cloned document data.
+     */
+    const attachmentsBefore = flatClone(docData._attachments);
+    const mutateableDocData = clone(docData);
+    mutateableDocData._attachments = attachmentsBefore;
+
     let nextVersion = oldCollection.version + 1;
 
     // run the document throught migrationStrategies
-    let currentPromise = Promise.resolve(docData);
+    let currentPromise = Promise.resolve(mutateableDocData);
     while (nextVersion <= oldCollection.newestCollection.schema.version) {
         const version = nextVersion;
-        currentPromise = currentPromise.then(docOrNull => _runStrategyIfNotNull(
+        currentPromise = currentPromise.then(docOrNull => runStrategyIfNotNull(
             oldCollection,
             version,
             docOrNull
@@ -311,15 +332,36 @@ export function migrateDocumentData(
         // check final schema
         try {
             oldCollection.newestCollection.schema.validate(doc);
-        } catch (e) {
+        } catch (err) {
+            const asRxError: RxError = err;
             throw newRxError('DM2', {
                 fromVersion: oldCollection.version,
                 toVersion: oldCollection.newestCollection.schema.version,
-                finalDoc: doc
+                originalDoc: docData,
+                finalDoc: doc,
+                /**
+                 * pass down data from parent error,
+                 * to make it better understandable what did not work
+                 */
+                errors: asRxError.parameters.errors,
+                schema: asRxError.parameters.schema
             });
         }
         return doc;
     });
+}
+
+
+export function isDocumentDataWithoutRevisionEqual<T>(doc1: T, doc2: T): boolean {
+    const doc1NoRev = Object.assign({}, doc1, {
+        _attachments: undefined,
+        _rev: undefined
+    });
+    const doc2NoRev = Object.assign({}, doc2, {
+        _attachments: undefined,
+        _rev: undefined
+    });
+    return deepEqual(doc1NoRev, doc2NoRev);
 }
 
 /**
@@ -327,43 +369,89 @@ export function migrateDocumentData(
  * @return status-action with status and migrated document
  */
 export function _migrateDocument(
-    oldCollection: OldCollection,
-    doc: any
+    oldCollection: OldRxCollection,
+    docData: any
 ): Promise<{ type: string, doc: {} }> {
     const action = {
-        res: null,
+        res: null as any,
         type: '',
         migrated: null,
-        doc,
+        doc: docData,
         oldCollection,
         newestCollection: oldCollection.newestCollection
     };
-    return migrateDocumentData(oldCollection, doc)
+
+    return runAsyncPluginHooks(
+        'preMigrateDocument',
+        {
+            docData,
+            oldCollection
+        }
+    )
+        .then(() => migrateDocumentData(oldCollection, docData))
         .then(migrated => {
+            /**
+             * Determiniticly handle the revision
+             * so migrating the same data on multiple instances
+             * will result in the same output.
+             */
+            if (isDocumentDataWithoutRevisionEqual(docData, migrated)) {
+                /**
+                 * Data not changed by migration strategies, keep the same revision.
+                 * This ensures that other replicated instances that did not migrate already
+                 * will still have the same document.
+                 */
+                migrated._rev = docData._rev;
+            } else if (migrated !== null) {
+                /**
+                 * data changed, increase revision height
+                 * so replicating instances use our new document data
+                 */
+                const newHeight = getHeightOfRevision(docData._rev) + 1;
+                const newRevision = newHeight + '-' + createRevision(migrated, true);
+                migrated._rev = newRevision;
+            }
+
             action.migrated = migrated;
             if (migrated) {
-                runPluginHooks(
-                    'preMigrateDocument',
-                    action
-                );
 
-                // save to newest collection
-                delete migrated._rev;
-                return oldCollection.newestCollection._pouchPut(migrated, true)
-                    .then(res => {
-                        action.res = res;
+                /**
+                 * save to newest collection
+                 * notice that this data also contains the attachments data
+                 */
+                const attachmentsBefore = migrated._attachments;
+                const saveData: WithAttachmentsData<any> = oldCollection.newestCollection._handleToPouch(migrated);
+                saveData._attachments = attachmentsBefore;
+
+                return oldCollection.newestCollection.pouch
+                    .bulkDocs([saveData], {
+                        /**
+                         * We need new_edits: false
+                         * because we provide the _rev by our own
+                         */
+                        new_edits: false
+                    })
+                    .then(() => {
+                        action.res = saveData;
                         action.type = 'success';
                         return runAsyncPluginHooks(
                             'postMigrateDocument',
                             action
                         );
                     });
-            } else action.type = 'deleted';
+            } else {
+                /**
+                 * Migration strategy returned null
+                 * which means we should not migrate this document,
+                 * just drop it.
+                 */
+                action.type = 'deleted';
+            }
         })
         .then(() => {
             // remove from old collection
             return oldCollection.pouchdb.remove(
-                _handleToPouch(oldCollection, doc)
+                _handleToPouch(oldCollection, docData)
             ).catch(() => { });
         })
         .then(() => action) as any;
@@ -374,7 +462,7 @@ export function _migrateDocument(
  * deletes this.pouchdb and removes it from the database.collectionsCollection
  */
 export function deleteOldCollection(
-    oldCollection: OldCollection
+    oldCollection: OldRxCollection
 ): Promise<void> {
     return oldCollection
         .pouchdb.destroy()
@@ -390,7 +478,7 @@ export function deleteOldCollection(
  * runs the migration on all documents and deletes the pouchdb afterwards
  */
 export function migrateOldCollection(
-    oldCollection: OldCollection,
+    oldCollection: OldRxCollection,
     batchSize = 10
 ): Observable<any> {
     if (oldCollection._migrate) {
@@ -440,13 +528,13 @@ export function migrateOldCollection(
 }
 
 export function migratePromise(
-    oldCollection: OldCollection,
+    oldCollection: OldRxCollection,
     batchSize?: number
 ): Promise<any> {
     if (!oldCollection._migratePromise) {
         oldCollection._migratePromise = new Promise((res, rej) => {
             const state$ = migrateOldCollection(oldCollection, batchSize);
-            state$['subscribe'](null, rej, res);
+            (state$ as any).subscribe(null, rej, res);
         });
     }
     return oldCollection._migratePromise;

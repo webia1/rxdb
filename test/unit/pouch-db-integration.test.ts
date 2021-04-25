@@ -15,13 +15,12 @@ import {
     clone,
     countAllUndeleted,
     getBatch,
-    PouchDB
-} from '../../';
-import * as schemaObjects from './../helper/schema-objects';
-import {
+    PouchDB,
     isRxDatabase,
-    PouchDBInstance
-} from '../../';
+    PouchDBInstance,
+    blobBufferUtil
+} from '../../plugins/core';
+import * as schemaObjects from './../helper/schema-objects';
 
 config.parallel('pouch-db-integration.test.js', () => {
     describe('init', () => {
@@ -466,9 +465,10 @@ config.parallel('pouch-db-integration.test.js', () => {
         });
         it('put->delete-put will find the previous document', async () => {
             const pouch: PouchDBInstance = new PouchDB(
-                randomCouchString(10), {
-                adapter: 'memory'
-            }
+                randomCouchString(10),
+                {
+                    adapter: 'memory'
+                }
             ) as any;
             const BULK_DOC_OPTIONS = {
                 new_edits: false
@@ -505,59 +505,8 @@ config.parallel('pouch-db-integration.test.js', () => {
                 'AssertionError'
             );
 
-            // process.exit();
             pouch.destroy();
         });
-        it('v7.1.1 has strange timing-problem', async () => {
-            if (!config.platform.isNode()) return;
-
-            /**
-             * TODO run this in node with the new version of pouchdb-find
-             * we have to wait until this is fixed:
-             * @link https://github.com/pouchdb/pouchdb/issues/7810
-             */
-            if (config.platform.isNode()) return;
-
-
-            const PouchDBCore = require('pouchdb-core');
-            PouchDBCore.plugin(require('pouchdb-find'));
-            PouchDBCore.plugin(require('pouchdb-adapter-memory'));
-
-            /*            const c = await humansCollection.create(0);
-                        const db = c.pouch;*/
-            const db = new PouchDBCore(
-                randomCouchString(10),
-                {
-                    adapter: 'memory'
-                }
-            );
-            //            await db.info();
-            await db.createIndex({
-                index: {
-                    fields: [
-                        'passportId'
-                    ]
-                }
-            });
-            await db.put({
-                _id: 'foobar',
-                passportId: 'z3i7q29g4yr1',
-                firstName: 'Edison',
-                lastName: 'Keebler',
-                age: 24
-            });
-
-            const docs = await db.find({
-                selector: {
-                    _id: {}
-                },
-                limit: 1
-            });
-
-            console.dir(docs);
-            assert.strictEqual(docs.docs.length, 1);
-        });
-
         it('should handle writes before reads (first insert then find)', async () => {
             const amount = 20;
             const pouches: PouchDBInstance[] = [];
@@ -622,6 +571,59 @@ config.parallel('pouch-db-integration.test.js', () => {
                 assert.strictEqual(res.docs.length, 1);
             });
             pouches.forEach(pouch => pouch.destroy());
+        });
+        it('re-saving an attachment fails in browsers', async () => {
+            const pouch1: PouchDBInstance = new PouchDB(
+                randomCouchString(10),
+                {
+                    adapter: 'memory'
+                }
+            );
+
+            const text = 'lorem ipsum dolor';
+            const mimeType = 'text/plain';
+            const blobBuffer = blobBufferUtil.createBlobBuffer(text, {
+                type: mimeType
+            } as any);
+
+            // insert a document with attachment
+            const docId = 'foobar';
+            const attachmentId = 'myattachment';
+            const putRes = await pouch1.put({ _id: docId });
+            await pouch1.putAttachment(
+                docId,
+                attachmentId,
+                putRes.rev,
+                blobBuffer,
+                mimeType
+            );
+
+
+            const rawAttachmentData = await pouch1.getAttachment(docId, attachmentId);
+
+            const pouch2: PouchDBInstance = new PouchDB(
+                randomCouchString(10),
+                {
+                    adapter: 'memory'
+                }
+            );
+            await pouch2.bulkDocs([
+                {
+                    _attachments: {
+                        [attachmentId]: {
+                            content_type: 'text/plain',
+                            data: rawAttachmentData
+                        }
+                    },
+                    _rev: '2-7a51240884063593468f396a29db001f',
+                    _id: 'foobar2',
+                }
+            ], {
+                new_edits: false
+            });
+
+            pouch1.destroy();
+            pouch2.destroy();
         });
     });
 });

@@ -39,7 +39,7 @@ myDocument.get$('name')
     isName = newName;
   });
 
-await myDocument.atomicSet('name', 'foobar2');
+await myDocument.atomicPatch({name: 'foobar2'});
 console.dir(isName); // isName is now 'foobar2'
 ```
 
@@ -56,7 +56,7 @@ All properties of a `RxDocument` are assigned as getters so you can also directl
   // Also useable with observables:
   myDocument.firstName$.subscribe(newName => console.log('name is: ' + newName));
   // > 'name is: Stefe'
-  await myDocument.atomicSet('firstName', 'Steve');
+  await myDocument.atomicPatch({firstName: 'Steve'});
   // > 'name is: Steve'
 ```
 
@@ -69,13 +69,14 @@ await myDocument.update({
         age: 1 // increases age by 1
     },
     $set: {
-        fistName: 'foobar' // sets firstName to foobar
+        firstName: 'foobar' // sets firstName to foobar
     }
 });
 ```
 
 ### atomicUpdate()
-Updates a documents data based on a function that transforms the current data and returns the new value.
+Updates a documents data based on a function that mutates the current data and returns the new value.
+In difference to `update()`, the atomic function cannot lead to 409 write conflicts.
 
 ```js
 
@@ -88,8 +89,23 @@ await myDocument.atomicUpdate(changeFunction);
 console.log(myDocument.name); // 'foooobarNew'
 ```
 
+### atomicPatch()
+Works like `atomicUpdate` but overwrites the given attributes over the documents data.
+
+```js
+await myDocument.atomicPatch({
+  name: 'Steve',
+  age: undefined // setting an attribute to undefined will remove it
+});
+console.log(myDocument.name); // 'Steve'
+```
+
+
 ### atomicSet()
 Works like `atomicUpdate` but only sets the value for a single attribute.
+
+## NOTICE: atomicSet is deprecated, use atomicPatch instead
+
 
 ```js
 await myDocument.atomicSet('nested.attribute', 'foobar');

@@ -14,7 +14,8 @@ import {
     createRxDatabase,
     addRxPlugin,
     randomCouchString,
-    dbCount
+    dbCount,
+    RxDatabase
 } from '../plugins/core';
 addRxPlugin(require('pouchdb-adapter-memory'));
 import { RxDBNoValidatePlugin } from '../plugins/no-validate';
@@ -102,7 +103,6 @@ for (let r = 0; r < runs; r++) {
 
     describe('performance.test.js', function () {
         this.timeout(90 * 1000);
-
         it('clear broadcast-channel tmp-folder', async () => {
             await BroadcastChannel.clearNodeFolder();
         });
@@ -111,7 +111,7 @@ for (let r = 0; r < runs; r++) {
         });
         it('spawnDatabases', async () => {
             // create databases with some collections each
-            const dbs: any[] = [];
+            const dbs: RxDatabase[] = [];
 
             const startTime = nowTime();
             for (let i = 0; i < benchmark.spawnDatabases.amount; i++) {
@@ -122,17 +122,17 @@ for (let r = 0; r < runs; r++) {
                 });
                 dbs.push(db);
 
-                await Promise.all(
-                    new Array(benchmark.spawnDatabases.collections)
-                        .fill(0)
-                        .map(() => {
-                            return db.collection({
-                                name: 'human' + randomCouchString(10),
-                                schema: schemas.averageSchema(),
-                                statics: ormMethods
-                            });
-                        })
-                );
+                const collectionData: any = {};
+                new Array(benchmark.spawnDatabases.collections)
+                    .fill(0)
+                    .forEach(() => {
+                        const name = 'human' + randomCouchString(10);
+                        collectionData[name] = {
+                            schema: schemas.averageSchema(),
+                            statics: ormMethods
+                        };
+                    });
+                await db.addCollections(collectionData);
             }
             const elapsed = elapsedTime(startTime);
             benchmark.spawnDatabases.total = benchmark.spawnDatabases.total + elapsed;
@@ -312,7 +312,7 @@ for (let r = 0; r < runs; r++) {
                             await col.insert(schemaObjects.averageSchema());
                         } else {
                             sub.unsubscribe();
-                            res();
+                            res(null);
                         }
                         return result;
                     })

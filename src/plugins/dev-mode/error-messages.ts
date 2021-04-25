@@ -27,6 +27,7 @@ export const ERROR_MESSAGES: { [k: string]: string } = {
     QU8: 'query cannot be an array',
     QU9: 'throwIfMissing can only be used in findOne queries',
     QU10: 'result empty and throwIfMissing: true',
+    QU11: 'RxQuery: no valid query params given',
 
     // mquery.js
     MQ1: 'path must be a string or object',
@@ -124,13 +125,14 @@ export const ERROR_MESSAGES: { [k: string]: string } = {
     RC1: 'Replication: already added',
     RC2: 'RxCollection.sync() query must be from the same RxCollection',
     RC3: 'RxCollection.sync() Do not use a collection\'s pouchdb as remote, use the collection instead',
+    RC4: 'RxReplicationState.awaitInitialReplication() cannot await inital replication when live: true',
+    RC5: 'RxReplicationState.awaitInitialReplication() cannot await inital replication if multiInstance because the replication might run on another instance',
 
-    // plugins/schema-check.js
+    // plugins/dev-mode/check-schema.js
     SC1: 'fieldnames do not match the regex',
     SC2: 'SchemaCheck: name \'item\' reserved for array-fields',
     SC3: 'SchemaCheck: fieldname has a ref-array but items-type is not string',
     SC4: 'SchemaCheck: fieldname has a ref but is not type string, [string,null] or array<string>',
-    SC5: 'SchemaCheck: fieldname cannot be primary and ref at same time',
     SC6: 'SchemaCheck: primary can only be defined at top-level',
     SC7: 'SchemaCheck: default-values can only be defined at top-level',
     SC8: 'SchemaCheck: first level-fields cannot start with underscore _',
@@ -153,6 +155,11 @@ export const ERROR_MESSAGES: { [k: string]: string } = {
     SC26: 'SchemaCheck: indexes needs to be specified at collection schema level',
     SC27: 'SchemaCheck: encrypted fields need to be specified at collection schema level',
     SC28: 'SchemaCheck: encrypted fields is not defined in the schema',
+    SC29: 'SchemaCheck: missing object key \'properties\'',
+
+    // plugins/dev-mode
+    DEV1: 'dev-mode added multiple times, ' +
+        'this is likely because you have mixed up the import from the the plugins/core and the full RxDB',
 
     // plugins/validate.js
     VD1: 'Sub-schema not found, does the schemaPath exists in your schema?',

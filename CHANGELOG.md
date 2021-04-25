@@ -1,5 +1,178 @@
 # Changelog
 
+### X.X.X (coming soon)
+
+Other:
+  - Added collection name when throwing errors in `RxQuery`
+
+### 9.17.1 (21 April 2020)
+
+Other:
+  - Added hints abount 2021 user survey.
+
+### 9.17.0 (14 April 2020)
+
+Features:
+  - Added possibility to change, update, remove and add `RxAttachment`s inside of a migration strategy.
+
+### 9.16.0 (12 April 2021)
+
+Features:
+  - Added `RxDatabase.migrationStates()` which returns an observable to observe the state of all ongoing migrations.
+  - Added `startupPromise` to the returned object of `RxDatabase().server()`
+
+Bugfixes:
+  - Ensure every background task is done when `RxDatabase.destroy()` resolves. [#2938](https://github.com/pubkey/rxdb/issues/2938)
+
+Other:
+  - Added analytics to docs page
+
+### 9.15.0 (25 February 2021)
+
+Bugfixes:
+  - Updated `pouchdb-all-dbs` fixes [#2874](https://github.com/pubkey/rxdb/issues/2874)  Thanks [@openscript](https://github.com/openscript)
+
+Other:
+  - Determinstic handling of revision keys during data migration
+  - Added more information to `RxError` when data migration fails
+
+### 9.14.0 (14 February 2021)
+
+Features:
+  - Added `RxReplicationState.awaitInitialReplication()`
+
+Bugfixes:
+  - Using the replication plugins must not required to also use leader-election
+  - Refactor `QueryCache.triggerCacheReplacement()` to not spawn `setTimeout` regulary. This is needed for server side rendering with angular universal.
+
+Other:
+  - Added server side rendering to the [angular example](https://github.com/pubkey/rxdb/tree/master/examples/angular)
+
+### 9.13.0 (10 February 2021)
+
+Features: 
+
+  - Added `RxCollection().bulkRemove()` [#2845](https://github.com/pubkey/rxdb/pull/2845) Thanks [@qinyang912](https://github.com/qinyang912)
+
+Other:
+
+  - Improved typings of `insertLocal()` [#2850](https://github.com/pubkey/rxdb/pull/2850) Thanks [@openscript](https://github.com/openscript)
+  - Improved typings of `bulkInsert()`
+
+### 9.12.1 (24 January 2021)
+
+Bugfixes:
+  - [#2785](https://github.com/pubkey/rxdb/pull/2785) postInsert hook not working when use bulkInsert to insert doc. Thanks [@qinyang912](https://github.com/qinyang912)
+  - Setted `sideEffects: true` for main module [#2798](https://github.com/pubkey/rxdb/issues/2798)
+
+Other:
+  - (docs) added warning about indexeddb adapter
+  - Upgraded typescript to `4.1.3`
+
+### 9.12.0 (3 January 2021)
+
+Features:
+  - Allow `primary` and `ref` at the same time in a schema. [#2747](https://github.com/pubkey/rxdb/issues/2747)
+
+Bugfixes:
+  - [#2705](https://github.com/pubkey/rxdb/issues/2705) when use bulkInsert to insert doc, the rxDocument property on changeEvent is an object, not a RxDocument instance. Thanks [@qinyang912](https://github.com/qinyang912)
+  - When the mutation function of `atomicUpdate()` has thrown once, it was not possible to use it again.
+
+### 9.11.0 (13 December 2020)
+
+Features:
+  - Added `putAttachment(skipIfSame)`, if set to `true` a write will be skipped if the attachment already exists with the same data.
+
+Bugfixes:
+  - `awaitInitialReplication()` resolves on failed replication [#2745](https://github.com/pubkey/rxdb/pull/2745). Thanks [@dome4](https://github.com/dome4)
+  - `insertLocal()` not emitted the state change across tabs
+
+Other:
+  - Added `name` identifier to `RxPlugin`
+  - Throw error when `dev-mode` plugin is added multiple times because there is no way that this was done intentional likely the developer has mixed core and default usage of RxDB.
+  - Fix reported security problem with the query builders mquery api.
+
+### 9.10.1 (23 November 2020)
+
+Other:
+  - Additional refactorings to improve collection creation speed
+
+### 9.10.0 (23 November 2020)
+
+Features:
+  - Added `RxCollection.getLocal$()` and `RxDatabase.getLocal$()` to observe local documents.
+  - Added `RxDatabase.addCollections()` to create multiple collections at once. Is faster and better typed than the now deprecated `RxDatabase.collection()`
+
+Other:
+  - Improved typings for `pouchdb.changes()`
+  - Moved from travisci to github actions
+
+### 9.9.0 (10 November 2020)
+
+Other:
+  - Improved startup performance by doing a index-exist check
+  - Added check for `properties` to dev-mode schema check
+  - Add better checks for query input in dev-mode
+
+### 9.8.0 (2 November 2020)
+
+Features:
+  - Added subscription parameters for `graphQLSchemaFromRxSchema()`
+  - Added [RxDocument.atomicPatch()](https://rxdb.info/rx-document.html#atomicpatch)
+
+Bugfixes:
+  - (types) Returned values of `syncGraphQL()` did not type-match with `RxGraphQLReplicationState` 
+  - `RxDocument.atomicUpdate()` now does a retry on 409 write conflicts
+
+Other:
+  - Added authentication to graphql example
+  - Deprecated `RxDocument.atomicSet()`. Used `atomicPatch` instead, it works better with typescript
+  - (docs) added workarounds for 6-connection limit at couchdb replication [#2659](https://github.com/pubkey/rxdb/pull/2659). Thanks [@MuresanSergiu](https://github.com/MuresanSergiu)
+
+### 9.7.1 (22 October 2020)
+
+Bugfixes:
+  - Server-Plugin: Replication did not work until there is at least one document.
+  - Fix skipping docs in graphql push replication [#2627](https://github.com/pubkey/rxdb/pull/2627) Thanks [@DDoerner](https://github.com/DDoerner)
+
+### 9.7.0 (21 October 2020)
+
+Bugfixes:
+  - `RxLocalDocument.$` emitted to often on changes [#2471](https://github.com/pubkey/rxdb/issues/2471)
+  - Fix typings of `RxReplicationState.collection`
+
+Features:
+  - Allow to skip docs in push/pull modifiers with the graphql-replication. [#2552](https://github.com/pubkey/rxdb/issues/2552) Thanks [@DDoerner](https://github.com/DDoerner)
+  - Allow to type the data of `RxLocalDocument` like `myDatabase.getLocal<{foo: string}>('bar')`
+
+Other:
+  - Refactored GraphQL replication to run faster [#2524](https://github.com/pubkey/rxdb/pull/2524/) Thanks [@corinv](https://github.com/corinv)
+
+### 9.6.0 (7 September 2020) 
+
+Features:
+  - Add `RxReplicationState.setHeaders()` [#2399](https://github.com/pubkey/rxdb/pull/2399/) Thanks [@DDoerner](https://github.com/DDoerner)
+  - Added `RxCollection.findByIds$()` [see](./docs-src/tutorials/rx-collection.md#findbyids$)
+
+Bugfixes:
+  - wrong key handling on compound indexes [#2456](https://github.com/pubkey/rxdb/pull/2456/) Thanks [@dome4](https://github.com/dome4)
+  - Nested `$or` queries where broken when they used the primaryKey in the selector
+
+### 9.5.0 (2 August 2020)
+
+Other:
+  - Upgraded pouchdb to `7.2.2`
+  - Upgraded typescript to `3.9.7`
+
+### 9.4.0 (24 July 2020)
+
+Features:
+  - Add cache-replacement-policy for the [QueryCache](https://pubkey.github.io/rxdb/query-cache.html)
+  - GraphQL replication async modifier function [#2367](https://github.com/pubkey/rxdb/issues/2367)
+
+Bugfixes:
+  - GraphQL replication run increasing requests when offline [#2336](https://github.com/pubkey/rxdb/issues/2336)
+
 ### 9.3.0 (26 June 2020)
 
 Features:

@@ -2,6 +2,7 @@ import {
     PouchSettings
 } from './pouch';
 import {
+    MigrationState,
     RxCollection,
     RxDumpCollection,
     RxDumpCollectionAsAny
@@ -12,6 +13,7 @@ import {
 import {
     RxDatabaseBase
 } from '../rx-database';
+import { Observable } from 'rxjs';
 
 export interface RxDatabaseCreator {
     name: string;
@@ -60,18 +62,27 @@ export type CollectionsOfDatabase = { [key: string]: RxCollection };
 export type RxDatabase<Collections = CollectionsOfDatabase> = RxDatabaseBase<Collections> &
     Collections & RxDatabaseGenerated<Collections>;
 
+export type AllMigrationStates = {
+    collection: RxCollection;
+    state: MigrationState;
+}[];
 
-export interface RxDatabaseGenerated<Collections> {
-    insertLocal(id: string, data: any): Promise<
-        RxLocalDocument<RxDatabase<Collections>>
+export interface RxLocalDocumentMutation<StorageType> {
+    insertLocal<LocalDocType = any>(id: string, data: LocalDocType): Promise<
+        RxLocalDocument<StorageType, LocalDocType>
     >;
-    upsertLocal(id: string, data: any): Promise<
-        RxLocalDocument<RxDatabase<Collections>>
+    upsertLocal<LocalDocType = any>(id: string, data: LocalDocType): Promise<
+        RxLocalDocument<StorageType, LocalDocType>
     >;
-    getLocal(id: string): Promise<
-        RxLocalDocument<RxDatabase<Collections>>
+    getLocal<LocalDocType = any>(id: string): Promise<
+        RxLocalDocument<StorageType, LocalDocType>
+    >;
+    getLocal$<LocalDocType = any>(id: string): Observable<
+        RxLocalDocument<StorageType, LocalDocType> | null
     >;
 }
+
+export interface RxDatabaseGenerated<Collections> extends RxLocalDocumentMutation<RxDatabase<Collections>> { }
 
 /**
  * Extract the **DocumentType** of a collection.

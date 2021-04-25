@@ -1,5 +1,5 @@
 import assert from 'assert';
-import AsyncTestUtil from 'async-test-util';
+import AsyncTestUtil, { wait } from 'async-test-util';
 import { Observable } from 'rxjs';
 
 import config from './config';
@@ -13,9 +13,13 @@ import {
     randomCouchString,
     promiseWait,
     getDocumentOrmPrototype,
-    getDocumentPrototype
-} from '../../';
-
+    getDocumentPrototype,
+    addRxPlugin
+} from '../../plugins/core';
+import { RxDBAttachmentsPlugin } from '../../plugins/attachments';
+addRxPlugin(RxDBAttachmentsPlugin);
+import { RxDBJsonDumpPlugin } from '../../plugins/json-dump';
+addRxPlugin(RxDBJsonDumpPlugin);
 
 config.parallel('rx-document.test.js', () => {
     describe('statics', () => { });
@@ -488,6 +492,41 @@ config.parallel('rx-document.test.js', () => {
                 assert.strictEqual(doc2.firstName, 'foobar');
                 db2.destroy();
             });
+            it('should retry on conflict errors', async () => {
+                const dbName = randomCouchString(10);
+                const db = await createRxDatabase({
+                    name: dbName,
+                    adapter: 'memory'
+                });
+                const c = await db.collection({
+                    name: 'humans',
+                    schema: schemas.primaryHuman
+                });
+                const doc = await c.insert(schemaObjects.simpleHuman());
+                const db2 = await createRxDatabase({
+                    name: dbName,
+                    adapter: 'memory',
+                    ignoreDuplicate: true
+                });
+                const c2 = await db2.collection({
+                    name: 'humans',
+                    schema: schemas.primaryHuman
+                });
+                const doc2 = await c2.findOne().exec(true);
+
+                await Promise.all([
+                    doc.atomicUpdate((d: any) => {
+                        d.firstName = 'foobar1';
+                        return d;
+                    }),
+                    doc2.atomicUpdate((d: any) => {
+                        d.firstName = 'foobar2';
+                        return d;
+                    })
+                ]);
+                db.destroy();
+                db2.destroy();
+            });
         });
         describe('negative', () => {
             it('should throw when not matching schema', async () => {
@@ -535,6 +574,72 @@ config.parallel('rx-document.test.js', () => {
                     'final'
                 );
                 db.destroy();
+            });
+            it('should still be useable if previous mutation function has thrown', async () => {
+                const col = await humansCollection.create(1);
+                const doc = await col.findOne().exec(true);
+
+                try {
+                    await doc.atomicUpdate(() => {
+                        throw new Error('ouch');
+                    });
+                } catch (err) { }
+                // async mutation
+                try {
+                    await doc.atomicUpdate(async () => {
+                        await wait(10);
+                        throw new Error('ouch');
+                    });
+                } catch (err) { }
+
+                await doc.atomicUpdate(d => {
+                    d.age = 150;
+                    return d;
+                });
+
+                assert.strictEqual(doc.age, 150);
+                col.database.destroy();
+            });
+        });
+    });
+    describe('.atomicPatch()', () => {
+        describe('positive', () => {
+            it('run one update', async () => {
+                const c = await humansCollection.createNested(1);
+                const doc = await c.findOne().exec(true);
+
+                const returnedDoc = await doc.atomicPatch({
+                    firstName: 'foobar'
+                });
+                assert.strictEqual('foobar', doc.firstName);
+                assert.ok(doc === returnedDoc);
+                c.database.destroy();
+            });
+            it('unset optional property by assigning undefined', async () => {
+                const c = await humansCollection.createNested(1);
+                const doc = await c.findOne().exec(true);
+
+                assert.ok(doc.mainSkill);
+
+                await doc.atomicPatch({
+                    mainSkill: undefined
+                });
+
+                assert.strictEqual(doc.mainSkill, undefined);
+                c.database.destroy();
+            });
+        });
+        describe('negative', () => {
+            it('should crash on non document field', async () => {
+                const c = await humansCollection.createNested(1);
+                const doc = await c.findOne().exec(true);
+                await AsyncTestUtil.assertThrows(
+                    () => doc.atomicPatch({
+                        foobar: 'foobar'
+                    } as any),
+                    'RxError'
+                );
+                c.database.destroy();
             });
         });
     });

@@ -12,8 +12,13 @@ import * as schemaObjects from '../helper/schema-objects';
 import * as humansCollection from '../helper/humans-collection';
 
 import {
-    addRxPlugin, createRxDatabase, promiseWait, randomCouchString
-} from '../../';
+    addRxPlugin,
+    createRxDatabase,
+    promiseWait,
+    randomCouchString,
+    isRxCollection,
+    RxReplicationState
+} from '../../plugins/core';
 
 import {
     fromEvent
@@ -23,9 +28,6 @@ import {
     filter,
     first
 } from 'rxjs/operators';
-import {
-    RxReplicationState
-} from '../../';
 
 let request: any;
 let SpawnServer: any;
@@ -160,7 +162,7 @@ describe('replication.test.js', () => {
             it('push-only-sync', async () => {
                 const c = await humansCollection.create(10, undefined, false);
                 const c2 = await humansCollection.create(10, undefined, false);
-                c.sync({
+                const replicationState = c.sync({
                     remote: c2,
                     waitForLeadership: false,
                     direction: {
@@ -168,6 +170,7 @@ describe('replication.test.js', () => {
                         push: true
                     }
                 });
+                assert.ok(isRxCollection(replicationState.collection));
                 await AsyncTestUtil.waitUntil(async () => {
                     const docs = await c2.find().exec();
                     return docs.length === 20;
@@ -176,8 +179,8 @@ describe('replication.test.js', () => {
                 const nonSyncedDocs = await c.find().exec();
                 assert.strictEqual(nonSyncedDocs.length, 10);
 
-                await c.database.destroy();
-                await c2.database.destroy();
+                c.database.destroy();
+                c2.database.destroy();
             });
             it('pull-only-sync', async () => {
                 const c = await humansCollection.create(10, undefined, false);
@@ -415,6 +418,7 @@ describe('replication.test.js', () => {
                     return ret;
                 });
                 sub.unsubscribe();
+
                 c.database.destroy();
                 c2.database.destroy();
             });
@@ -450,6 +454,25 @@ describe('replication.test.js', () => {
 
                 await AsyncTestUtil.wait(100);
                 assert.strictEqual(emitted.length, 0);
+
+                c.database.destroy();
+                c2.database.destroy();
+            });
+        });
+        describe('.awaitInitialReplication()', () => {
+            it('should have the full data when resolved', async () => {
+                const c = await humansCollection.create(0);
+                const c2 = await humansCollection.create(10);
+                const repState = await c.sync({
+                    remote: c2,
+                    waitForLeadership: false,
+                    options: {
+                        live: false
+                    }
+                });
+                await repState.awaitInitialReplication();
+                const docs = await c.find().exec();
+                assert.strictEqual(docs.length, 10);
 
                 c.database.destroy();
                 c2.database.destroy();

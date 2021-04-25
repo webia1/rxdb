@@ -11,7 +11,7 @@ import {
     Subscription,
     Observable
 } from 'rxjs';
-import { skipUntil } from 'rxjs/operators';
+import { skipUntil, filter, first } from 'rxjs/operators';
 
 import {
     promiseWait,
@@ -76,8 +76,11 @@ export class RxReplicationStateBase {
         error: new Subject(),
     };
 
+    public canceled: boolean = false;
+
     constructor(
-        public collection: RxCollection
+        public collection: RxCollection,
+        private syncOptions: SyncOptions
     ) {
         // create getters
         Object.keys(this._subjects).forEach(key => {
@@ -89,9 +92,35 @@ export class RxReplicationStateBase {
         });
     }
 
+    awaitInitialReplication(): Promise<void> {
+        if (this.syncOptions.options && this.syncOptions.options.live) {
+            throw newRxError('RC4', {
+                database: this.collection.database.name,
+                collection: this.collection.name
+            });
+        }
+        if (this.collection.database.multiInstance && this.syncOptions.waitForLeadership) {
+            throw newRxError('RC5', {
+                database: this.collection.database.name,
+                collection: this.collection.name
+            });
+        }
+
+        const that: RxReplicationState = this as any;
+        return that.complete$.pipe(
+            filter(x => !!x),
+            first()
+        ).toPromise();
+    }
+
     cancel() {
-        if (this._pouchEventEmitterObject)
+        if (this.canceled) {
+            return;
+        }
+        this.canceled = true;
+        if (this._pouchEventEmitterObject) {
             this._pouchEventEmitterObject.cancel();
+        }
         this._subs.forEach(sub => sub.unsubscribe());
     }
 }
@@ -110,14 +139,17 @@ export function setPouchEventEmitter(
     rxRepState: RxReplicationState,
     evEmitter: PouchSyncHandler
 ) {
-    if (rxRepState._pouchEventEmitterObject)
+    if (rxRepState._pouchEventEmitterObject) {
         throw newRxError('RC1');
+    }
     rxRepState._pouchEventEmitterObject = evEmitter;
 
     // change
     rxRepState._subs.push(
         fromEvent(evEmitter as any, 'change')
-            .subscribe(ev => rxRepState._subjects.change.next(ev))
+            .subscribe(ev => {
+                rxRepState._subjects.change.next(ev);
+            })
     );
 
     // denied
@@ -206,9 +238,13 @@ export function setPouchEventEmitter(
 }
 
 export function createRxReplicationState(
-    collection: RxCollection
+    collection: RxCollection,
+    syncOptions: SyncOptions
 ): RxReplicationState {
-    return new RxReplicationStateBase(collection) as RxReplicationState;
+    return new RxReplicationStateBase(
+        collection,
+        syncOptions
+    ) as RxReplicationState;
 }
 
 export function sync(
@@ -252,15 +288,33 @@ export function sync(
     }
 
     const syncFun = pouchReplicationFunction(this.pouch, direction);
-    if (query) useOptions.selector = (query as any).keyCompress().selector;
+    if (query) {
+        useOptions.selector = (query as any).keyCompress().selector;
+    }
 
-    const repState: any = createRxReplicationState(this);
+    const repState: any = createRxReplicationState(
+        this,
+        {
+            remote,
+            waitForLeadership,
+            direction,
+            options,
+            query
+        }
+    );
 
     // run internal so .sync() does not have to be async
-    const waitTillRun = waitForLeadership ? this.database.waitForLeadership() : promiseWait(0);
+    const waitTillRun = (
+        waitForLeadership &&
+        this.database.multiInstance // do not await leadership if not multiInstance
+    ) ? this.database.waitForLeadership() : promiseWait(0);
     (waitTillRun as any).then(() => {
-        const pouchSync = syncFun(remote, useOptions);
+        if (this.destroyed || repState.canceled) {
+            return;
+        }
+
         this.watchForChanges();
+        const pouchSync = syncFun(remote, useOptions);
         setPouchEventEmitter(repState, pouchSync);
         this._repStates.push(repState);
     });
@@ -284,6 +338,7 @@ export const hooks = {
 };
 
 export const RxDBReplicationPlugin: RxPlugin = {
+    name: 'replication',
     rxdb,
     prototypes,
     hooks

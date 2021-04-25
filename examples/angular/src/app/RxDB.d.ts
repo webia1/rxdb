@@ -2,7 +2,11 @@
  * custom typings so typescript knows about the schema-fields
  */
 
-import { RxDocument, RxCollection, RxDatabase } from 'rxdb';
+import type {
+    RxDocument,
+    RxCollection,
+    RxDatabase
+} from 'rxdb/plugins/core';
 
 export type RxHeroDocumentType = {
     name: string;
@@ -11,8 +15,8 @@ export type RxHeroDocumentType = {
     hp: number;
     team?: string;
     skills: Array<{
-        name?: string,
-        damage?: string
+        name?: string;
+        damage?: number;
     }>;
 };
 

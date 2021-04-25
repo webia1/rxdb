@@ -3,21 +3,27 @@ A collection stores documents of the same type.
 
 
 ## Creating a Collection
-To create a collection you need a RxDatabase object which has the .collection()-method. Every collection needs a collection name and a valid RxSchema. Other attributes are optional.
+To create one or more collections you need a RxDatabase object which has the `.addCollections()`-method. Every collection needs a collection name and a valid RxSchema. Other attributes are optional.
 
 ```js
-myDatabase.collection({
-  name: 'humans',
-  schema: mySchema,
-  pouchSettings: {} // (optional)
-  statics: {}, // (optional) // ORM-functions for this collection
-  methods: {}, // (optional) ORM-functions for documents
-  attachments: {}, // (optional) ORM-functions for attachments
-  options: {}, // (optional) Custom paramters that might be used in plugins
-  migrationStrategies: {}, // (optional)
-  autoMigrate: true, // (optional)
-})
-  .then(collection => console.dir(collection));
+const myCollection = await myDatabase.addCollections({
+  // key = collectionName
+  humans: {
+    schema: mySchema,
+    pouchSettings: {}, // (optional)
+    statics: {}, // (optional) ORM-functions for this collection
+    methods: {}, // (optional) ORM-functions for documents
+    attachments: {}, // (optional) ORM-functions for attachments
+    options: {}, // (optional) Custom parameters that might be used in plugins
+    migrationStrategies: {}, // (optional)
+    autoMigrate: true, // (optional)
+    cacheReplacementPolicy: function(){}, // (optional) custom cache replacement policy
+  },
+  // you can create multiple collections at once
+  otherHumans: {
+    // ...
+  }
+});
 ```
 
 ### name
@@ -30,27 +36,23 @@ The schema defines how your data looks and how it should be handled. You can pas
 You can pass settings directly to the [pouchdb database create options](https://pouchdb.com/api.html#options) through this property.
 
 ### ORM-functions
-With the parameters `statics`, `methods` and `attachments`, you can defined ORM-functions that are applied to each of these objects that belong to this collection. See [ORM/DRM](./orm.md).
+With the parameters `statics`, `methods` and `attachments`, you can define ORM-functions that are applied to each of these objects that belong to this collection. See [ORM/DRM](./orm.md).
 
 ### Migration
-With the parameters `migrationStrategies` and `autoMigrate` you can specify how mirgration between different schema-versions should be done. [See Migration](./data-migration.md).
+With the parameters `migrationStrategies` and `autoMigrate` you can specify how migration between different schema-versions should be done. [See Migration](./data-migration.md).
 
 ## Get a collection from the database
 To get an existing collection from the database, call the collection name directly on the database:
 
 ```javascript
 // newly created collection
-const collection = await db.collection({
-  name: 'heroes',
-  schema: mySchema
+const collections = await db.addCollections({
+  heroes: {
+    schema: mySchema
+  }
 });
 const collection2 = db.heroes;
-// or
-// const collection2 = db['heroes']
-
-console.log(collection == collection2);
-// true
-
+console.log(collections.heroes === collection2); //> true
 ```
 
 ## Functions
@@ -80,7 +82,7 @@ const doc = await myCollection.insert({
 
 ### bulkInsert()
 
-When you have to insert many documents at once, use bulk insert. This is much faster then calling `.insert()` multiple times.
+When you have to insert many documents at once, use bulk insert. This is much faster than calling `.insert()` multiple times.
 Returns an object with a `success`- and `error`-array.
 
 ```js
@@ -100,6 +102,22 @@ const result = await myCollection.bulkInsert([{
 ```
 
 NOTICE: `bulkInsert` will not fail on update conflicts and you cannot expect that on failure the other documents are not inserted.
+
+### bulkRemove()
+
+When you want to remove many documents at once, use bulk remove. Returns an object with a `success`- and `error`-array.
+
+```js
+const result = await myCollection.bulkRemove([
+  'primary1',
+  'primary2'
+]);
+
+// > {
+//   success: [RxDocument, RxDocument],
+//   error: []
+// }
+```
 
 ### newDocument()
 Sometimes it can be helpful to spawn and use documents before saving them into the database.
@@ -159,7 +177,7 @@ await myCollection.atomicUpsert(docData);
 To find documents in your collection, use this method. [See RxQuery.find()](./rx-query.md#find).
 
 ```js
-// find all that are older then 18
+// find all that are older than 18
 const olderDocuments = await myCollection
     .find()
     .where('age')
@@ -175,8 +193,11 @@ To find documents in your collection, use this method. [See RxQuery.find()](./rx
 
 ```js
 // get document with name:foobar
-myCollection.findOne().where('name').eq('foo')
-  .exec().then(doc => console.dir(doc));
+myCollection.findOne({
+  selector: {
+    name: 'foo'
+  }
+}).exec().then(doc => console.dir(doc));
 
 // get document by primary, functionally identical to above query
 myCollection.findOne('foo')
@@ -203,9 +224,15 @@ const docsMap = await myCollection.findByIds(ids);
 console.dir(docsMap); // Map(2)
 ```
 
+NOTICE: The `Map` returned by `findByIds` is not guaranteed to return elements in the same order as the list of ids passed to it.
+
+### findByIds$()
+
+Same as `findByIds()` but returns an `Observable` that emits the `Map` each time a value of it has changed because of a database write.
+
 
 ### dump()
-Use this function to create a json export from every document in the collection. You can pass true as parameter to decrypt the encrypted data fields of your documents.
+Use this function to create a json export from every document in the collection. You can pass true as a parameter to decrypt the encrypted data fields of your documents.
 ```js
 myCollection.dump()
   .then(json => console.dir(json));

@@ -37,7 +37,9 @@ export class LeaderElector {
     }
 
     destroy() {
-        if (this.destroyed) return;
+        if (this.destroyed) {
+            return;
+        }
         this.destroyed = true;
         this.isDead = true;
         return this.die();
@@ -89,6 +91,7 @@ export const prototypes = {
 };
 
 export const RxDBLeaderElectionPlugin: RxPlugin = {
+    name: 'leader-election',
     rxdb,
     prototypes,
     hooks: {

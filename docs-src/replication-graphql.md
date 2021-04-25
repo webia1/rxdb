@@ -7,13 +7,14 @@ When the user is offline, you still can use the data and later sync it with the 
 ## Comparison to Couchdb-Sync
 
 Pros:
- * The GraphQL-replication is faster and needs less resources
- * You do not need a couchdb-compliant endpoint, only a GraphQL-endpoint
+ * The GraphQL-replication is faster and needs less resources.
+ * You do not need a couchdb-compliant endpoint, only a GraphQL-endpoint.
 
 Cons:
- * You can not replicate multiple databases with each other
- * It is assumed that the GraphQL-server is the single source of truth
- * You have to setup things at the server side while with couchdb-sync you only have to start a server
+ * You can not replicate multiple databases with each other.
+ * It is assumed that the GraphQL-server is the single source of truth.
+ * You have to setup things at the server side while with couchdb-sync you only have to start a server.
+ * The GraphQL replication does not support the replication of attachments.
 
 **NOTICE:** To play around, check out the full example of the RxDB [GraphQL replication with server and client](https://github.com/pubkey/rxdb/tree/master/examples/graphql)
 
@@ -158,8 +159,8 @@ With the queryBuilder, you can then setup the pull-replication.
 const replicationState = myCollection.syncGraphQL({
     url: 'http://example.com/graphql', // url to the GraphQL endpoint
     pull: {
-        pullQueryBuilder, // the queryBuilder from above
-        modifier: doc => doc // (optional) modifies all pulled documents before they are handeled by RxDB
+        queryBuilder: pullQueryBuilder, // the queryBuilder from above
+        modifier: doc => doc // (optional) modifies all pulled documents before they are handeled by RxDB. Returning null will skip the document.
     },
     deletedFlag: 'deleted', // the flag which indicates if a pulled document is deleted
     live: true // if this is true, rxdb will watch for ongoing changes and sync them, when false, a one-time-replication will be done
@@ -196,9 +197,9 @@ With the queryBuilder, you can then setup the push-replication.
 const replicationState = myCollection.syncGraphQL({
     url: 'http://example.com/graphql', // url to the GraphQL endpoint
     push: {
-        pushQueryBuilder, // the queryBuilder from above
+        queryBuilder: pushQueryBuilder, // the queryBuilder from above
         batchSize: 5, // (optional) amount of documents that will be send in one batch
-        modifier: d => d // (optional) modifies all pushed documents before they are send to the GraphQL endpoint
+        modifier: d => d // (optional) modifies all pushed documents before they are send to the GraphQL endpoint. Returning null will skip the document.
     },
     deletedFlag: 'deleted', // the flag which indicates if a pulled document is deleted
     live: true // if this is true, rxdb will watch for ongoing changes and sync them
@@ -284,6 +285,16 @@ Returns true if the replication is stopped. This can be if a non-live replicatio
 
 ```js
 replicationState.isStopped(); // true/false
+```
+
+#### .setHeaders()
+
+Changes the headers for the replication after it has been set up.
+
+```js
+replicationState.setHeaders({
+    Authorization: `...`
+});
 ```
 
 #### .awaitInitialReplication()

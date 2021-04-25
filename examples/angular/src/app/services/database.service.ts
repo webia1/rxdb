@@ -11,8 +11,6 @@ import {
     RxHeroDocumentType
 } from './../RxDB.d';
 
-import heroSchema from '../schemas/hero.schema';
-
 /**
  * Instead of using the default rxdb-import,
  * we do a custom build which lets us cherry-pick
@@ -28,11 +26,18 @@ import { RxDBLeaderElectionPlugin } from 'rxdb/plugins/leader-election';
 import { RxDBReplicationPlugin } from 'rxdb/plugins/replication';
 import * as PouchdbAdapterHttp from 'pouchdb-adapter-http';
 import * as PouchdbAdapterIdb from 'pouchdb-adapter-idb';
+import {
+    COUCHDB_PORT,
+    HERO_COLLECTION_NAME,
+    DATABASE_NAME,
+    IS_SERVER_SIDE_RENDERING
+} from '../../shared';
+import { HERO_SCHEMA } from '../schemas/hero.schema';
 
 let collections = [
     {
-        name: 'hero',
-        schema: heroSchema,
+        name: HERO_COLLECTION_NAME,
+        schema: HERO_SCHEMA,
         methods: {
             hpPercent(this: RxHeroDocument): number {
                 return this.hp / this.maxHP * 100;
@@ -42,32 +47,51 @@ let collections = [
     }
 ];
 
-console.log('hostname: ' + window.location.hostname);
-const syncURL = 'http://' + window.location.hostname + ':10101/';
-
-let doSync = true;
-if (window.location.hash == '#nosync') doSync = false;
+const syncHost = IS_SERVER_SIDE_RENDERING ? 'localhost' : window.location.hostname;
+const syncURL = 'http://' + syncHost + ':' + COUCHDB_PORT + '/' + DATABASE_NAME;
+console.log('syncURL: ' + syncURL);
 
 
-async function loadRxDBPlugins(): Promise<any> {
+function doSync(): boolean {
+    if (IS_SERVER_SIDE_RENDERING) {
+        return true;
+    }
+
+    if (global.window.location.hash == '#nosync') {
+        return false;
+    }
+    return true;
+}
 
 
-    addRxPlugin(RxDBLeaderElectionPlugin);
+/**
+ * Loads RxDB plugins
+ */
+async function loadRxDBPlugins(): Promise<void> {
+
 
     addRxPlugin(RxDBReplicationPlugin);
     // http-adapter is always needed for replication with the node-server
     addRxPlugin(PouchdbAdapterHttp);
 
-    /**
-     * indexed-db adapter
-     */
-    addRxPlugin(PouchdbAdapterIdb);
+    if (IS_SERVER_SIDE_RENDERING) {
+        // for server side rendering, import the memory adapter
+        const PouchdbAdapterMemory = require('pouchdb-adapter-' + 'memory');
+        addRxPlugin(PouchdbAdapterMemory);
+    } else {
+        // else, use indexeddb
+        addRxPlugin(PouchdbAdapterIdb);
+
+        // then we also need the leader election
+        addRxPlugin(RxDBLeaderElectionPlugin);
+    }
+
 
     /**
      * to reduce the build-size,
      * we use some modules in dev-mode only
      */
-    if (isDevMode()) {
+    if (isDevMode() && !IS_SERVER_SIDE_RENDERING) {
         await Promise.all([
 
             // add dev-mode plugin
@@ -99,19 +123,26 @@ async function _create(): Promise<RxHeroesDatabase> {
 
     console.log('DatabaseService: creating database..');
     const db = await createRxDatabase<RxHeroesCollections>({
-        name: 'angularheroes',
-        adapter: 'idb'
+        name: DATABASE_NAME,
+        adapter: IS_SERVER_SIDE_RENDERING ? 'memory' : 'idb',
+        multiInstance: !IS_SERVER_SIDE_RENDERING
         // password: 'myLongAndStupidPassword' // no password needed
     });
     console.log('DatabaseService: created database');
-    (window as any)['db'] = db; // write to window for debugging
+
+    if (!IS_SERVER_SIDE_RENDERING) {
+        // write to window for debugging
+        (window as any)['db'] = db;
+    }
 
     // show leadership in title
-    db.waitForLeadership()
-        .then(() => {
-            console.log('isLeader now');
-            document.title = '♛ ' + document.title;
-        });
+    if (!IS_SERVER_SIDE_RENDERING) {
+        db.waitForLeadership()
+            .then(() => {
+                console.log('isLeader now');
+                document.title = '♛ ' + document.title;
+            });
+    }
 
     // create collections
     console.log('DatabaseService: create collections');
@@ -138,16 +169,43 @@ async function _create(): Promise<RxHeroesDatabase> {
     }, false);
 
     // sync with server
-    if (doSync) {
+    if (doSync()) {
         console.log('DatabaseService: sync');
+        const collectionUrl = syncURL + '/' + HERO_COLLECTION_NAME;
+
+        if (IS_SERVER_SIDE_RENDERING) {
+            /**
+             * For server side rendering,
+             * we just run a one-time replication to ensure the client has the same data as the server.
+             */
+            console.log('DatabaseService: await initial replication to ensure SSR has all data');
+            const firstReplication = await db.hero.sync({
+                remote: collectionUrl,
+                options: {
+                    live: false
+                }
+            });
+            await firstReplication.awaitInitialReplication();
+        }
+
+        /**
+         * we start a live replication which also sync the ongoing changes
+         */
         await db.hero.sync({
-            remote: syncURL + '/hero'
+            remote: collectionUrl,
+            options: {
+                live: true
+            }
         });
     }
+
+    console.log('DatabaseService: created');
 
     return db;
 }
 
+
+let initState: null | Promise<any> = null;;
 let DB_INSTANCE: RxHeroesDatabase;
 
 /**
@@ -155,8 +213,15 @@ let DB_INSTANCE: RxHeroesDatabase;
  * to ensure the database exists before the angular-app starts up
  */
 export async function initDatabase() {
-    console.log('initDatabase()');
-    DB_INSTANCE = await _create();
+    /**
+     * When server side rendering is used,
+     * The database might already be there
+     */
+    if (!initState) {
+        console.log('initDatabase()');
+        initState = _create().then(db => DB_INSTANCE = db);
+    }
+    await initState;
 }
 
 @Injectable()

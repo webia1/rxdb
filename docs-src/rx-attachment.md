@@ -1,6 +1,6 @@
 # Attachments
 
-Like [pouchdb](https://pouchdb.com/guides/attachments.html), RxDB can store attachments which has a better performance and a higher [quota-limit](https://www.html5rocks.com/en/tutorials/offline/quota-research/) then regular data.
+Like [pouchdb](https://pouchdb.com/guides/attachments.html), RxDB can store attachments which have better performance and a higher [quota-limit](https://www.html5rocks.com/en/tutorials/offline/quota-research/) than regular data.
 
 You can store string, binary files, images and whatever you want side by side with your documents.
 
@@ -21,9 +21,10 @@ const mySchema = {
     }
 };
 
-const myCollection = await myDatabase.collection({
-    name: 'humans',
-    schema: mySchema
+const myCollection = await myDatabase.addCollections({
+    humans: {
+        schema: mySchema
+    }
 });
 ```
 
@@ -32,11 +33,14 @@ const myCollection = await myDatabase.collection({
 Adds an attachment to a `RxDocument`. Returns a Promise with the new attachment.
 
 ```javascript
-const attachment = await myDocument.putAttachment({
-    id,     // string, name of the attachment like 'cat.jpg'
-    data,   // (string|Blob|Buffer) data of the attachment
-    type    // (string) type of the attachment-data like 'image/jpeg'
-});
+const attachment = await myDocument.putAttachment(
+    {
+        id,     // (string) name of the attachment like 'cat.jpg'
+        data,   // (string|Blob|Buffer) data of the attachment
+        type    // (string) type of the attachment-data like 'image/jpeg'
+    },
+    true // (boolean, optional) skipIfSame:If true and attachment already exists with same data, the write will be skipped
+);
 ```
 
 ## getAttachment()

@@ -1,7 +1,8 @@
 import type {
     RxPlugin,
     RxCollectionCreator,
-    RxDatabaseCreator
+    RxDatabaseCreator,
+    RxPluginPreAddRxPluginArgs
 } from '../../types';
 
 import {
@@ -16,10 +17,13 @@ import {
     ensureCollectionNameValid,
     ensureDatabaseNameIsValid
 } from './unallowed-properties';
+import { checkQuery } from './check-query';
+import { newRxError } from '../../rx-error';
 
 export * from './check-schema';
-
+const DEV_MODE_PLUGIN_NAME = 'dev-mode';
 export const RxDBDevModePlugin: RxPlugin = {
+    name: DEV_MODE_PLUGIN_NAME,
     rxdb: true,
     overwritable: {
         isDevMode() {
@@ -34,12 +38,38 @@ export const RxDBDevModePlugin: RxPlugin = {
         }
     },
     hooks: {
+        preAddRxPlugin: (args: RxPluginPreAddRxPluginArgs) => {
+            /**
+             * throw when dev mode is added multiple times
+             * because there is no way that this was done intentional.
+             * Likely the developer has mixed core and default usage of RxDB.
+             */
+            if (args.plugin.name === DEV_MODE_PLUGIN_NAME) {
+                throw newRxError('DEV1', {
+                    plugins: args.plugins
+                });
+            }
+        },
         preCreateRxSchema: checkSchema,
         preCreateRxDatabase: (args: RxDatabaseCreator) => {
             ensureDatabaseNameIsValid(args);
         },
         preCreateRxCollection: (args: RxCollectionCreator) => {
             ensureCollectionNameValid(args);
+            if (args.name.charAt(0) === '_') {
+                throw newRxError('DB2', {
+                    name: args.name
+                });
+            }
+            if (!args.schema) {
+                throw newRxError('DB4', {
+                    name: args.name,
+                    args
+                });
+            }
+        },
+        preCreateRxQuery: (args) => {
+            checkQuery(args);
         },
         createRxCollection: (args: RxCollectionCreator) => {
             // check ORM-methods

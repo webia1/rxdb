@@ -1,7 +1,7 @@
 import { IdleQueue } from 'custom-idle-queue';
 import { BroadcastChannel } from 'broadcast-channel';
 import type { LeaderElector } from './plugins/leader-election';
-import type { CollectionsOfDatabase, PouchDBInstance, RxDatabase, RxCollectionCreator, RxJsonSchema, RxCollection, PouchSettings, ServerOptions, RxDatabaseCreator, RxDumpDatabase, RxDumpDatabaseAny } from './types';
+import type { CollectionsOfDatabase, PouchDBInstance, RxDatabase, RxCollectionCreator, RxJsonSchema, RxCollection, PouchSettings, ServerOptions, RxDatabaseCreator, RxDumpDatabase, RxDumpDatabaseAny, RxCollectionCreatorBase, AllMigrationStates, ServerResponse } from './types';
 import { Subject, Subscription, Observable } from 'rxjs';
 import { RxChangeEvent } from './rx-change-event';
 import { RxStorage } from './rx-storate.interface';
@@ -50,7 +50,19 @@ export declare class RxDatabaseBase<Collections = CollectionsOfDatabase, RxStora
      */
     removeCollectionDoc(name: string, schema: any): Promise<void>;
     /**
+     * creates multiple RxCollections at once
+     * to be much faster by saving db txs and doing stuff in bulk-operations
+     * This function is not called often, but mostly in the critical path at the initial page load
+     * So it must be as fast as possible
+     */
+    addCollections(collectionCreators: {
+        [name: string]: RxCollectionCreatorBase;
+    }): Promise<{
+        [key: string]: RxCollection;
+    }>;
+    /**
      * create or fetch a collection
+     * @deprecated use addCollections() instead, it is faster and better typed
      */
     collection<RxDocumentType = any, OrmMethods = {}, StaticMethods = {
         [key: string]: any;
@@ -81,17 +93,14 @@ export declare class RxDatabaseBase<Collections = CollectionsOfDatabase, RxStora
     /**
      * spawn server
      */
-    server(_options?: ServerOptions): {
-        app: any;
-        pouchApp: any;
-        server: any;
-    };
+    server(_options?: ServerOptions): ServerResponse;
     leaderElector(): LeaderElector;
     isLeader(): boolean;
     /**
      * returns a promise which resolves when the instance becomes leader
      */
     waitForLeadership(): Promise<boolean>;
+    migrationStates(): Observable<AllMigrationStates>;
     /**
      * destroys the database-instance and all collections
      */

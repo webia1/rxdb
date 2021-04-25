@@ -49,12 +49,15 @@
     * [Functions](./rx-collection.md#functions)
         * [$](./rx-collection.md#observe-)
         * [insert()](./rx-collection.md#insert)
+        * [bulkInsert()](./rx-collection.md#bulkinsert)
+        * [bulkRemove()](./rx-collection.md#bulkremove)
         * [newDocument()](./rx-collection.md#newdocument)
         * [upsert()](./rx-collection.md#upsert)
         * [atomicUpsert()](./rx-collection.md#atomicupsert)
         * [find()](./rx-collection.md#find)
         * [findOne()](./rx-collection.md#findone)
-        * [findByIds()](./rx-collection.md#findByIds)
+        * [findByIds()](./rx-collection.md#findbyids)
+        * [findByIds$()](./rx-collection.md#findbyids$)
         * [dump()](./rx-collection.md#dump)
         * [importDump()](./rx-collection.md#importdump)
         * [sync()](./rx-collection.md#sync)
@@ -71,6 +74,7 @@
         * [proxy-get](./rx-document.md#proxy-get)
         * [update()](./rx-document.md#update)
         * [atomicUpdate()](./rx-document.md#atomicupdate)
+        * [atomicPatch()](./rx-document.md#atomicpatch)
         * [atomicSet()](./rx-document.md#atomicset)
         * [$](./rx-document.md#observe-)
         * [remove()](./rx-document.md#remove)
@@ -109,11 +113,13 @@
 
 * [InMemory](./in-memory.md)
 
+* [QueryCache](./query-cache.md)
+
 * [LocalDocuments](./rx-local-document.md)
 
 * [Custom Build](./custom-build.md)
 
-* [Plugins](./plugins.md)
+* [Creating Plugins](./plugins.md)
 
 * [Adapters](./adapters.md)
 

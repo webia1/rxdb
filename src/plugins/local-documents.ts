@@ -21,7 +21,9 @@ import {
     newRxTypeError
 } from '../rx-error';
 import {
-    clone, now, LOCAL_PREFIX
+    clone,
+    now,
+    LOCAL_PREFIX
 } from '../util';
 
 import type {
@@ -41,8 +43,11 @@ import {
 import {
     filter,
     map,
-    distinctUntilChanged
+    distinctUntilChanged,
+    startWith,
+    mergeMap
 } from 'rxjs/operators';
+import { Observable } from 'rxjs';
 
 const DOC_CACHE_BY_PARENT = new WeakMap();
 const _getDocCache = (parent: any) => {
@@ -102,9 +107,7 @@ const RxLocalDocumentPrototype: any = {
     get isLocal() {
         return true;
     },
-    get parentPouch(
-        this: any
-    ) {
+    get parentPouch() {
         return _getPouchByParent(this.parent);
     },
 
@@ -116,7 +119,9 @@ const RxLocalDocumentPrototype: any = {
         this: any,
         changeEvent: RxChangeEvent
     ) {
-        if (changeEvent.documentId !== this.primary) return;
+        if (changeEvent.documentId !== this.primary) {
+            return;
+        }
         switch (changeEvent.operation) {
             case 'UPDATE':
                 const newData = clone(changeEvent.documentData);
@@ -140,11 +145,11 @@ const RxLocalDocumentPrototype: any = {
     get primaryPath() {
         return 'id';
     },
-    get primary(this: any) {
+    get primary() {
         return this.id;
     },
-    get $(this: RxDocument) {
-        return this._dataSync$.asObservable();
+    get $() {
+        return (this as RxDocument)._dataSync$.asObservable();
     },
     $emit(this: any, changeEvent: RxChangeEvent) {
         return this.parent.$emit(changeEvent);
@@ -204,12 +209,10 @@ const RxLocalDocumentPrototype: any = {
             .then((res: any) => {
                 const endTime = now();
                 newData._rev = res.rev;
-                this._dataSync$.next(newData);
-
                 const changeEvent = new RxChangeEvent(
                     'UPDATE',
                     this.id,
-                    clone(this._data),
+                    clone(newData),
                     isRxDatabase(this.parent) ? this.parent.token : this.parent.database.token,
                     isRxCollection(this.parent) ? this.parent.name : null,
                     true,
@@ -295,13 +298,14 @@ RxLocalDocument.create = (id: string, data: any, parent: any) => {
  * save the local-document-data
  * throws if already exists
  */
-function insertLocal(this: any, id: string, data: any): Promise<RxLocalDocument> {
-    if (isRxCollection(this) && this._isInMemory)
+function insertLocal(this: RxDatabase | RxCollection, id: string, data: any): Promise<RxLocalDocument> {
+    if (isRxCollection(this) && this._isInMemory) {
         return this._parentCollection.insertLocal(id, data);
+    }
 
     data = clone(data);
 
-    return this.getLocal(id)
+    return (this as any).getLocal(id)
         .then((existing: any) => {
             if (existing) {
                 throw newRxError('LD7', {
@@ -315,11 +319,26 @@ function insertLocal(this: any, id: string, data: any): Promise<RxLocalDocument>
             const saveData = clone(data);
             saveData._id = LOCAL_PREFIX + id;
 
-            return pouch.put(saveData);
-        }).then((res: any) => {
-            data._rev = res.rev;
-            const newDoc = RxLocalDocument.create(id, data, this);
-            return newDoc;
+            const startTime = now();
+            return pouch.put(saveData).then((res: any) => {
+                data._rev = res.rev;
+                const newDoc = RxLocalDocument.create(id, data, this);
+                const endTime = now();
+                const changeEvent = new RxChangeEvent(
+                    'INSERT',
+                    id,
+                    clone(data),
+                    isRxDatabase(this) ? this.token : this.database.token,
+                    isRxCollection(this) ? this.name : '',
+                    true,
+                    startTime,
+                    endTime,
+                    undefined,
+                    newDoc
+                );
+                this.$emit(changeEvent);
+                return newDoc;
+            });
         });
 }
 
@@ -328,15 +347,16 @@ function insertLocal(this: any, id: string, data: any): Promise<RxLocalDocument>
  * overwrites existing if exists
  */
 function upsertLocal(this: any, id: string, data: any): Promise<RxLocalDocument> {
-    if (isRxCollection(this) && this._isInMemory)
+    if (isRxCollection(this) && this._isInMemory) {
         return this._parentCollection.upsertLocal(id, data);
+    }
 
     return this.getLocal(id)
-        .then((existing: any) => {
+        .then((existing: RxDocument) => {
             if (!existing) {
                 // create new one
-                const doc = this.insertLocal(id, data);
-                return doc;
+                const docPromise = this.insertLocal(id, data);
+                return docPromise;
             } else {
                 // update existing
                 data._rev = existing._data._rev;
@@ -366,22 +386,68 @@ function getLocal(this: any, id: string): Promise<RxLocalDocument> {
         .catch(() => null);
 }
 
+function getLocal$(this: RxCollection, id: string): Observable<RxLocalDocument | null> {
+    return this.$.pipe(
+        startWith(null),
+        mergeMap(async (cE: RxChangeEvent | null) => {
+            if (cE) {
+                return {
+                    changeEvent: cE
+                };
+            } else {
+                const doc = await this.getLocal(id);
+                return {
+                    doc: doc
+                };
+            }
+        }),
+        mergeMap(async (changeEventOrDoc) => {
+            if (changeEventOrDoc.changeEvent) {
+                const cE = changeEventOrDoc.changeEvent;
+                if (!cE.isLocal || cE.documentId !== id) {
+                    return {
+                        use: false
+                    };
+                } else {
+                    const doc = cE.rxDocument ? cE.rxDocument : await this.getLocal(id);
+                    return {
+                        use: true,
+                        doc: doc
+                    };
+                }
+            } else {
+                return {
+                    use: true,
+                    doc: changeEventOrDoc.doc
+                };
+            }
+        }),
+        filter(filterFlagged => filterFlagged.use),
+        map(filterFlagged => {
+            return filterFlagged.doc;
+        })
+    );
+}
+
 export const rxdb = true;
 export const prototypes = {
     RxCollection: (proto: any) => {
         proto.insertLocal = insertLocal;
         proto.upsertLocal = upsertLocal;
         proto.getLocal = getLocal;
+        proto.getLocal$ = getLocal$;
     },
     RxDatabase: (proto: any) => {
         proto.insertLocal = insertLocal;
         proto.upsertLocal = upsertLocal;
         proto.getLocal = getLocal;
+        proto.getLocal$ = getLocal$;
     }
 };
 export const overwritable = {};
 
 export const RxDBLocalDocumentsPlugin: RxPlugin = {
+    name: 'local-documents',
     rxdb,
     prototypes,
     overwritable

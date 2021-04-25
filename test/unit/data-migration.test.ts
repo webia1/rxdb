@@ -11,8 +11,11 @@ import {
     randomCouchString,
     promiseWait,
     _collectionNamePrimary,
-    countAllUndeleted
-} from '../../';
+    countAllUndeleted,
+    RxError,
+    clone,
+    getHeightOfRevision
+} from '../../plugins/core';
 
 import {
     _getOldCollections,
@@ -23,6 +26,10 @@ import {
     migrateOldCollection,
     migratePromise
 } from '../../plugins/migration';
+import {
+    SimpleHumanV3DocumentType,
+    HumanDocumentType
+} from '../helper/schema-objects';
 
 config.parallel('data-migration.test.js', () => {
     describe('.create() with migrationStrategies', () => {
@@ -522,7 +529,7 @@ config.parallel('data-migration.test.js', () => {
                     });
                     const pw8 = AsyncTestUtil.waitResolveable(5000); // higher than test-timeout
                     const state$ = col.migrate();
-                    state$['subscribe'](undefined, pw8.resolve as any, undefined);
+                    state$.subscribe(undefined, pw8.resolve as any, undefined);
 
                     await pw8.promise;
                     col.database.destroy();
@@ -560,6 +567,32 @@ config.parallel('data-migration.test.js', () => {
                     assert.ok(failed);
                     col.database.destroy();
                 });
+                it('should contain the schema validation error in the thrown object', async () => {
+                    const col = await humansCollection.createMigrationCollection(5, {
+                        3: (docData: SimpleHumanV3DocumentType) => {
+                            /**
+                             * Delete required age-field
+                             * to provoke schema validation error
+                             */
+                            delete (docData as any).age;
+                            return docData;
+                        }
+                    });
+
+                    let hasThrown = false;
+                    try {
+                        await col.migratePromise();
+                    } catch (err) {
+                        hasThrown = true;
+                        /**
+                         * Should contain the validation errors
+                         */
+                        assert.ok(JSON.stringify((err as RxError).parameters.errors).includes('data.age'));
+                    }
+                    assert.ok(hasThrown);
+
+                    col.database.destroy();
+                });
             });
         });
     });
@@ -567,12 +600,13 @@ config.parallel('data-migration.test.js', () => {
         describe('run', () => {
             it('should auto-run on creation', async () => {
                 const col = await humansCollection.createMigrationCollection(
-                    10, {
-                    3: (doc: any) => {
-                        doc.age = parseInt(doc.age, 10);
-                        return doc;
-                    }
-                },
+                    10,
+                    {
+                        3: (doc: any) => {
+                            doc.age = parseInt(doc.age, 10);
+                            return doc;
+                        }
+                    },
                     randomCouchString(10),
                     true
                 );
@@ -581,6 +615,68 @@ config.parallel('data-migration.test.js', () => {
                 assert.strictEqual(typeof (docs.pop() as any).age, 'number');
                 col.database.destroy();
             });
+            it('should be able to change the primary key during migration', async () => {
+                const dbName = randomCouchString(10);
+                const schema0 = {
+                    version: 0,
+                    type: 'object',
+                    properties: {
+                        id: {
+                            type: 'string',
+                            primary: true
+                        }
+                    },
+                    required: ['id']
+                };
+                const schema1 = {
+                    version: 1,
+                    type: 'object',
+                    properties: {
+                        id: {
+                            type: 'string'
+                        },
+                        name: {
+                            type: 'string',
+                            primary: true
+                        }
+                    },
+                    required: ['id', 'name']
+                };
+                const db = await createRxDatabase({
+                    name: dbName,
+                    adapter: 'memory'
+                });
+                const col = await db.collection({
+                    name: 'heroes',
+                    schema: schema0
+                });
+                await col.insert({
+                    id: 'niven'
+                });
+                await db.destroy();
+
+                const db2 = await createRxDatabase({
+                    name: dbName,
+                    adapter: 'memory'
+                });
+                const col2 = await db2.collection({
+                    name: 'heroes',
+                    schema: schema1,
+                    migrationStrategies: {
+                        1: (oldDoc: any) => {
+                            oldDoc.name = (oldDoc.id as string).toUpperCase();
+                            return oldDoc;
+                        }
+                    }
+                });
+
+                const doc = await col2.findOne().exec();
+                assert.ok(doc);
+                assert.strictEqual(doc.id, 'niven');
+                assert.strictEqual(doc.name, 'NIVEN');
+                db2.destroy();
+            });
+
             it('should auto-run on creation (async)', async () => {
                 const col = await humansCollection.createMigrationCollection(
                     10, {
@@ -598,8 +694,75 @@ config.parallel('data-migration.test.js', () => {
                 assert.strictEqual(typeof (docs.pop() as any).age, 'number');
                 col.database.destroy();
             });
-        });
+            it('should increase revision height when the strategy changed the documents data', async () => {
+                const dbName = randomCouchString(10);
 
+                const nonChangedKey = 'not-changed-data';
+                const changedKey = 'changed-data';
+
+                const db = await createRxDatabase({
+                    name: dbName,
+                    adapter: 'memory'
+                });
+                const col = await db.collection<HumanDocumentType>({
+                    name: 'humans',
+                    schema: schemas.humanFinal
+                });
+                await col.bulkInsert([
+                    {
+                        passportId: changedKey,
+                        firstName: 'foo',
+                        lastName: 'bar',
+                        age: 20
+                    },
+                    {
+                        passportId: nonChangedKey,
+                        firstName: 'foo',
+                        lastName: 'bar',
+                        age: 21
+                    }
+                ]);
+
+                const revBeforeMigration = (await col.findOne(nonChangedKey).exec(true)).toJSON(true)._rev;
+                await db.destroy();
+
+                const db2 = await createRxDatabase({
+                    name: dbName,
+                    adapter: 'memory'
+                });
+                const schema2 = clone(schemas.humanFinal);
+                schema2.version = 1;
+
+                const col2 = await db2.collection<HumanDocumentType>({
+                    name: 'humans',
+                    schema: schema2,
+                    migrationStrategies: {
+                        1: function (docData: HumanDocumentType) {
+                            if (docData.passportId === changedKey) {
+                                docData.age = 100;
+                            }
+                            return docData;
+                        }
+                    }
+                });
+
+                /**
+                 * If document data was not changed by migration, it should have kept the same revision
+                 */
+                const revAfterMigration = (await col2.findOne(nonChangedKey).exec(true)).toJSON(true)._rev;
+                assert.strictEqual(revBeforeMigration, revAfterMigration);
+
+                /**
+                 * If document was changed, we should have an increased revision height
+                 * to ensure that replicated instances use our new data.
+                 */
+                const revChangedAfterMigration = (await col2.findOne(changedKey).exec(true)).toJSON(true)._rev;
+                const afterHeight = getHeightOfRevision(revChangedAfterMigration);
+                assert.strictEqual(afterHeight, 2);
+
+                db2.destroy();
+            });
+        });
         describe('.migrationNeeded()', () => {
             it('return true if schema-version is 0', async () => {
                 const col = await humansCollection.create();
@@ -630,6 +793,53 @@ config.parallel('data-migration.test.js', () => {
                 assert.strictEqual(needed, true);
                 col.database.destroy();
             });
+        });
+    });
+    describe('RxDatabase.migrationStates()', () => {
+        it('should emit the ongoing migration state', async () => {
+            const db = await createRxDatabase({
+                name: randomCouchString(10),
+                adapter: 'memory'
+            });
+            const migrationStrategies = {
+                1: () => { },
+                2: () => { },
+                3: () => { }
+            };
+
+            const emitted: any[] = [];
+            db.migrationStates().subscribe(x => emitted.push(x));
+
+            await db.addCollections({
+                foobar: {
+                    schema: schemas.simpleHumanV3,
+                    autoMigrate: false,
+                    migrationStrategies
+                },
+                foobar2: {
+                    schema: schemas.simpleHumanV3,
+                    autoMigrate: false,
+                    migrationStrategies
+                }
+            });
+
+            await Promise.all([
+                db.foobar.migrate().toPromise(),
+                db.foobar2.migrate().toPromise()
+            ]);
+
+            assert.ok(emitted.length >= 2);
+
+            const endStates = emitted.map(list => list.map((i: any) => i.state)).pop();
+            if (!endStates) {
+                throw new Error('endStates missing');
+            }
+            assert.strictEqual(endStates.length, 2);
+            endStates.forEach((s: any) => {
+                assert.strictEqual(s.done, true);
+            });
+
+            db.destroy();
         });
     });
     describe('issues', () => {

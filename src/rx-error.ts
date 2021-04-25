@@ -4,7 +4,7 @@
 
 import { overwritable } from './overwritable';
 import type {
-    RxErrorParameters
+    RxErrorParameters, PouchWriteError
 } from './types';
 
 /**
@@ -34,9 +34,10 @@ function parametersToString(parameters: any): string {
 
 function messageForError(
     message: string,
+    code: string,
     parameters: any
 ): string {
-    return 'RxError:' + '\n' +
+    return 'RxError (' + code + '):' + '\n' +
         message + '\n' +
         parametersToString(parameters);
 }
@@ -51,7 +52,7 @@ export class RxError extends Error {
         message: string,
         parameters: RxErrorParameters = {}
     ) {
-        const mes = messageForError(message, parameters);
+        const mes = messageForError(message, code, parameters);
         super(mes);
         this.code = code;
         this.message = mes;
@@ -79,7 +80,7 @@ export class RxTypeError extends TypeError {
         message: string,
         parameters: RxErrorParameters = {}
     ) {
-        const mes = messageForError(message, parameters);
+        const mes = messageForError(message, code, parameters);
         super(mes);
         this.code = code;
         this.message = mes;
@@ -116,4 +117,15 @@ export function newRxTypeError(
         overwritable.tunnelErrorMessage(code),
         parameters
     );
+}
+
+export function isPouchdbConflictError(err: RxError | RxTypeError): boolean {
+    if (
+        err.parameters && err.parameters.pouchDbError &&
+        (err.parameters.pouchDbError as PouchWriteError).status === 409
+    ) {
+        return true;
+    } else {
+        return false;
+    }
 }

@@ -13,11 +13,12 @@ import {
 } from 'graphql';
 import { createServer } from 'http';
 import { SubscriptionServer } from 'subscriptions-transport-ws';
+import { Request, Response, NextFunction } from 'express';
 
 const express = require('express');
 // we need cors because this server is also used in browser-tests
 const cors = require('cors');
-const graphqlHTTP = require('express-graphql');
+import { graphqlHTTP } from 'express-graphql';
 
 import {
     GRAPHQL_PATH,
@@ -54,7 +55,8 @@ export interface GraphqlServer<T> {
     setDocument(doc: T): Promise<{ data: any }>;
     overwriteDocuments(docs: T[]): void;
     getDocuments(): T[];
-    close(now?: boolean): void;
+    requireHeader(name: string, value: string): void;
+    close(now?: boolean): Promise<void>;
 }
 
 export interface GraphQLServerModule {
@@ -205,6 +207,30 @@ export async function spawn(
         humanChanged: () => pubsub.asyncIterator('humanChanged')
     };
 
+    // header simulation middleware
+    let reqHeaderName: string = '';
+    let reqHeaderValue: string = '';
+    app.use((req: Request, res: Response, next: NextFunction) => {
+        if (!reqHeaderName) {
+            next();
+            return;
+        }
+        if (req.header(reqHeaderName.toLowerCase()) !== reqHeaderValue) {
+            res.status(200).json({
+                'errors': [
+                    {
+                        'extensions': {
+                            'code': 'UNAUTHENTICATED'
+                        },
+                        'message': 'user not authenticated'
+                    }
+                ]
+            });
+        } else {
+            next();
+        }
+    });
+
     app.use(GRAPHQL_PATH, graphqlHTTP({
         schema: schema,
         rootValue: root,
@@ -212,7 +238,7 @@ export async function spawn(
     }));
 
     const ret = 'http://localhost:' + port + GRAPHQL_PATH;
-    const client = graphQlClient({
+    let client = graphQlClient({
         url: ret
     });
     const retServer: Promise<GraphqlServer<Human>> = new Promise(res => {
@@ -264,10 +290,29 @@ export async function spawn(
                     getDocuments() {
                         return documents;
                     },
+                    requireHeader(name: string, value: string) {
+                        if (!name) {
+                            reqHeaderName = '';
+                            reqHeaderValue = '';
+                            client = graphQlClient({
+                                url: ret
+                            });
+                        } else {
+                            reqHeaderName = name;
+                            reqHeaderValue = value;
+                            const headers: { [key: string]: string } = {};
+                            headers[name] = value;
+                            client = graphQlClient({
+                                url: ret,
+                                headers
+                            });
+                        }
+                    },
                     close(now = false) {
                         if (now) {
                             server.close();
                             subServer.close();
+                            return Promise.resolve();
                         } else {
                             return new Promise(res2 => {
                                 setTimeout(() => {

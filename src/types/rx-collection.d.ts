@@ -1,12 +1,14 @@
-import {
+import type {
     RxJsonSchema,
     PouchSettings,
     RxDocument,
-    RxLocalDocument
+    MigrationStrategies
 } from './';
-import {
+import type {
     RxCollectionBase
 } from '../rx-collection';
+import type { QueryCache } from '../query-cache';
+import { RxLocalDocumentMutation } from './rx-database';
 
 export interface KeyFunctionMap {
     [key: string]: Function;
@@ -15,16 +17,24 @@ export interface NumberFunctionMap {
     [key: number]: Function;
 }
 
-export interface RxCollectionCreator {
+export interface RxCollectionCreator extends RxCollectionCreatorBase {
     name: string;
+}
+
+/**
+ * TODO remove RxCollectionCreator
+ * and rename this one in the next release
+ */
+export type RxCollectionCreatorBase = {
     schema: RxJsonSchema;
     pouchSettings?: PouchSettings;
-    migrationStrategies?: KeyFunctionMap;
+    migrationStrategies?: MigrationStrategies;
     autoMigrate?: boolean;
     statics?: KeyFunctionMap;
     methods?: KeyFunctionMap;
     attachments?: KeyFunctionMap;
     options?: any;
+    cacheReplacementPolicy?: RxCacheReplacementPolicy;
 }
 
 export interface MigrationState {
@@ -35,6 +45,9 @@ export interface MigrationState {
     deleted: number; // handled docs which got deleted
     percent: number; // percentage
 }
+
+
+export type RxCacheReplacementPolicy = (collection: RxCollection, queryCache: QueryCache) => void;
 
 export type RxCollectionHookCallback<
     RxDocumentType,
@@ -64,7 +77,7 @@ export type RxCollection<
     RxCollectionGenerated<RxDocumentType, OrmMethods> &
     StaticMethods;
 
-export interface RxCollectionGenerated<RxDocumentType = any, OrmMethods = {}> {
+export interface RxCollectionGenerated<RxDocumentType = any, OrmMethods = {}> extends RxLocalDocumentMutation<RxCollection<RxDocumentType, OrmMethods>> {
 
     // HOOKS
     preInsert(fun: RxCollectionHookNoInstanceCallback<RxDocumentType, OrmMethods>, parallel: boolean): void;
@@ -74,10 +87,6 @@ export interface RxCollectionGenerated<RxDocumentType = any, OrmMethods = {}> {
     postSave(fun: RxCollectionHookCallback<RxDocumentType, OrmMethods>, parallel: boolean): void;
     postRemove(fun: RxCollectionHookCallback<RxDocumentType, OrmMethods>, parallel: boolean): void;
     postCreate(fun: RxCollectionHookCallbackNonAsync<RxDocumentType, OrmMethods>): void;
-
-    insertLocal(id: string, data: any): Promise<RxLocalDocument<RxCollection<RxDocumentType, OrmMethods>>>;
-    upsertLocal(id: string, data: any): Promise<RxLocalDocument<RxCollection<RxDocumentType, OrmMethods>>>;
-    getLocal(id: string): Promise<RxLocalDocument<RxCollection<RxDocumentType, OrmMethods>>>;
 
     // only inMemory-collections
     awaitPersistence(): Promise<void>;

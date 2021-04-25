@@ -14,11 +14,11 @@
     "postinstall": "npm run fix-jest-expo"
   },
   "devDependencies": {
-    "babel-preset-expo": "8.2.1",
+    "babel-preset-expo": "8.3.0",
     "expo-cli": "3.21.5",
     "jest-expo": "37.0.0",
-    "react-native-gesture-handler": "1.6.1",
-    "react-test-renderer": "16.13.1",
+    "react-native-gesture-handler": "1.10.3",
+    "react-test-renderer": "17.0.2",
     "rimraf": "3.0.2",
     "schedule": "0.5.0"
   },
@@ -27,11 +27,11 @@
     "expo": "37.0.12",
     "global": "4.4.0",
     "pouchdb-adapter-asyncstorage": "6.4.1",
-    "pouchdb-adapter-http": "7.2.1",
+    "pouchdb-adapter-http": "7.2.2",
     "random-token": "0.0.8",
-    "react": "16.13.1",
-    "react-native": "https://github.com/expo/react-native/archive/sdk-33.0.0.tar.gz",
+    "react": "17.0.2",
+    "react-native": "https://github.com/expo/react-native/archive/sdk-38.0.2.tar.gz",
     "rxdb": "file:rxdb-local.tgz",
-    "rxjs": "6.6.0"
+    "rxjs": "6.6.7"
   }
 }

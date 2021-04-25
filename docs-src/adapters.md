@@ -44,6 +44,7 @@ const database = await createRxDatabase({
 
 # Browser
 
+
 ## IndexedDB
 
 The IndexedDB adapter stores the data inside of [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) use this in browsers environments as default.
@@ -55,6 +56,22 @@ addRxPlugin(require('pouchdb-adapter-idb'));
 const database = await createRxDatabase({
     name: 'mydatabase',
     adapter: 'idb' // the name of your adapter
+});
+```
+
+## IndexedDB (new, beta)
+
+A reimplementation of the indexeddb adapter which uses native secondary indexes. Should have a much better performance but can behave [different on some edge cases](https://github.com/pouchdb/pouchdb/tree/master/packages/node_modules/pouchdb-adapter-indexeddb#differences-between-couchdb-and-pouchdbs-find-implementations-under-indexeddb).
+
+**Notice**: Multiple users have reported problems with this adapter. It is **not** recommended to use this adapter.
+
+```js
+// npm install pouchdb-adapter-indexeddb --save
+addRxPlugin(require('pouchdb-adapter-indexeddb'));
+
+const database = await createRxDatabase({
+    name: 'mydatabase',
+    adapter: 'indexeddb' // the name of your adapter
 });
 ```
 
@@ -118,20 +135,6 @@ const database = await createRxDatabase({
 
 # React-Native
 
-## asyncstorage
-
-Uses react-native's [asyncstorage](https://facebook.github.io/react-native/docs/asyncstorage).
-
-```js
-// npm install pouchdb-adapter-asyncstorage --save
-addRxPlugin(require('pouchdb-adapter-asyncstorage'));
-
-const database = await createRxDatabase({
-    name: 'mydatabase',
-    adapter: 'node-asyncstorage' // the name of your adapter
-});
-```
-
 ## react-native-sqlite
 
 Uses ReactNative SQLite as storage. Claims to be much faster than the asyncstorage adapter.
@@ -186,6 +189,21 @@ const database = await createRxDatabase({
 });
 ```
 
+## asyncstorage
+
+Uses react-native's [asyncstorage](https://facebook.github.io/react-native/docs/asyncstorage).
+
+**Notice**: There are [known problems](https://github.com/pubkey/rxdb/issues/2286) with this adapter and it is **not** recommended to use it.
+
+```js
+// npm install pouchdb-adapter-asyncstorage --save
+addRxPlugin(require('pouchdb-adapter-asyncstorage'));
+
+const database = await createRxDatabase({
+    name: 'mydatabase',
+    adapter: 'node-asyncstorage' // the name of your adapter
+});
+```
 
 ## asyncstorage-down
 A leveldown adapter that stores on asyncstorage.
@@ -214,7 +232,7 @@ addRxPlugin(require('pouchdb-adapter-cordova-sqlite'));
 
 const database = await createRxDatabase({
     name: 'mydatabase',
-    adapter: 'node-cordova-sqlite' // the name of your adapter
+    adapter: 'cordova-sqlite' // the name of your adapter
 });
 ```
 

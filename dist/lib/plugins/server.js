@@ -7,7 +7,7 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.spawnServer = spawnServer;
 exports.onDestroy = onDestroy;
-exports.RxDBServerPlugin = exports.overwritable = exports.hooks = exports.prototypes = exports.rxdb = void 0;
+exports.RxDBServerPlugin = void 0;
 
 var _regenerator = _interopRequireDefault(require("@babel/runtime/regenerator"));
 
@@ -27,8 +27,11 @@ var _replication = require("./replication");
 
 var _watchForChanges = require("./watch-for-changes");
 
+var _pouchdbAdapterHttp = _interopRequireDefault(require("pouchdb-adapter-http"));
+
 (0, _core.addRxPlugin)(_replication.RxDBReplicationPlugin);
 (0, _core.addRxPlugin)(_watchForChanges.RxDBWatchForChangesPlugin);
+(0, _core.addRxPlugin)(_pouchdbAdapterHttp["default"]);
 var ExpressPouchDB;
 
 try {
@@ -166,17 +169,83 @@ function spawnServer(_ref2) {
   var pouchApp = ExpressPouchDB(pseudo, pouchdbExpressOptions);
   app.use(collectionsPath, pouchApp);
   var server = null;
+  var startupPromise = Promise.resolve();
 
   if (startServer) {
-    server = app.listen(port);
+    /**
+     * Listen for errors on server startup.
+     * TODO in the next major release we should make db.server() async
+     * and properly handle the error instead of returning a startupPromise
+     */
+    startupPromise = new Promise(function (res, rej) {
+      var answered = false;
+      server = app.listen(port, function () {
+        if (!answered) {
+          answered = true;
+          res();
+        }
+      });
+      server.on('error', function (err) {
+        if (!answered) {
+          answered = true;
+          rej(err);
+        }
+      });
+    });
     SERVERS_OF_DB.get(db).push(server);
+    /**
+     * When the database has no documents, there is no db file
+     * and so the replication would not work.
+     * This is a hack which ensures that the couchdb instance exists
+     * and we can replicate even if there is no document in the beginning.
+     */
+
+    Promise.all(Object.values(db.collections).map( /*#__PURE__*/function () {
+      var _ref3 = (0, _asyncToGenerator2["default"])( /*#__PURE__*/_regenerator["default"].mark(function _callee2(collection) {
+        var url, pingDb;
+        return _regenerator["default"].wrap(function _callee2$(_context2) {
+          while (1) {
+            switch (_context2.prev = _context2.next) {
+              case 0:
+                url = 'http://localhost:' + port + collectionsPath + '/' + collection.name;
+                _context2.prev = 1;
+                pingDb = new _pouchDb.PouchDB(url);
+                _context2.next = 5;
+                return pingDb.info();
+
+              case 5:
+                _context2.next = 7;
+                return pingDb.close();
+
+              case 7:
+                _context2.next = 11;
+                break;
+
+              case 9:
+                _context2.prev = 9;
+                _context2.t0 = _context2["catch"](1);
+
+              case 11:
+              case "end":
+                return _context2.stop();
+            }
+          }
+        }, _callee2, null, [[1, 9]]);
+      }));
+
+      return function (_x4) {
+        return _ref3.apply(this, arguments);
+      };
+    }()));
   }
 
-  return {
+  var response = {
     app: app,
     pouchApp: pouchApp,
-    server: server
+    server: server,
+    startupPromise: startupPromise
   };
+  return response;
 }
 /**
  * when a server is created, no more collections can be spawned
@@ -205,26 +274,19 @@ function onDestroy(db) {
   }
 }
 
-var rxdb = true;
-exports.rxdb = rxdb;
-var prototypes = {
-  RxDatabase: function RxDatabase(proto) {
-    proto.server = spawnServer;
-  }
-};
-exports.prototypes = prototypes;
-var hooks = {
-  preDestroyRxDatabase: onDestroy,
-  preCreateRxCollection: ensureNoMoreCollections
-};
-exports.hooks = hooks;
-var overwritable = {};
-exports.overwritable = overwritable;
 var RxDBServerPlugin = {
-  rxdb: rxdb,
-  prototypes: prototypes,
-  overwritable: overwritable,
-  hooks: hooks
+  name: 'server',
+  rxdb: true,
+  prototypes: {
+    RxDatabase: function RxDatabase(proto) {
+      proto.server = spawnServer;
+    }
+  },
+  overwritable: {},
+  hooks: {
+    preDestroyRxDatabase: onDestroy,
+    preCreateRxCollection: ensureNoMoreCollections
+  }
 };
 exports.RxDBServerPlugin = RxDBServerPlugin;
 

@@ -8,7 +8,7 @@ import {
     wasRevisionfromPullReplication
 } from './helper';
 import type {
-    RxCollection
+    RxCollection, PouchChangeRow, PouchChangeDoc, PouchdbChangesResult
 } from '../../types';
 
 /**
@@ -78,15 +78,8 @@ export async function getChangesSinceLastPushSequence(
     batchSize = 10,
     syncRevisions: boolean = false,
 ): Promise<{
-    results: {
-        id: string,
-        seq: number,
-        changes: {
-            rev: string
-        }[],
-        doc: any
-    }[],
-    last_seq: number
+    results: (PouchChangeRow & PouchChangeDoc)[];
+    last_seq: number;
 }> {
     let lastPushSequence = await getLastPushSequence(
         collection,
@@ -106,10 +99,9 @@ export async function getChangesSinceLastPushSequence(
         changes = await collection.pouch.changes({
             since: lastPushSequence,
             limit: batchSize,
-            include_docs: true,
+            include_docs: true
             // style: 'all_docs'
         } as any);
-
         const filteredResults = changes.results.filter((change: any) => {
             /**
              * filter out changes with revisions resulting from the pull-stream
@@ -152,7 +144,7 @@ export async function getChangesSinceLastPushSequence(
                     doc: result.docs[0]['ok'],
                     deleted: result.docs[0]['ok']._deleted
                 };
-            });
+            }) as any;
         }
 
         if (useResults.length === 0 && changes.results.length === batchSize) {
@@ -165,14 +157,11 @@ export async function getChangesSinceLastPushSequence(
         }
     }
 
-
-    changes.results.forEach((change: any) => {
+    (changes as PouchdbChangesResult).results.forEach((change: any) => {
         change.doc = collection._handleFromPouch(change.doc);
     });
 
-
-
-    return changes;
+    return changes as any;
 }
 
 

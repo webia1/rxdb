@@ -1,12 +1,14 @@
 import { Observable } from 'rxjs';
 
-import type { RxQuery } from '../../types';
+import type { RxQuery, RxCollection } from '../../types';
 import {
     PouchReplicationOptions,
     PouchSyncHandler
 } from '../pouch';
 
 export declare class RxReplicationState {
+    collection: RxCollection;
+
     change$: Observable<any>;
     docs$: Observable<any>;
     denied$: Observable<any>;
@@ -14,6 +16,12 @@ export declare class RxReplicationState {
     alive$: Observable<boolean>;
     complete$: Observable<any>;
     error$: Observable<any>;
+
+    /**
+     * waits until the inital replication is done
+     * and the client can be expected to have the same data as the server
+     */
+    awaitInitialReplication(): Promise<void>;
 
     // can be used for debuging or custom event-handling
     // will be set some time after sync() is called

@@ -1,6 +1,6 @@
 import assert from 'assert';
 import AsyncTestUtil, {
-    clone
+    clone, wait
 } from 'async-test-util';
 import GraphQLClient from 'graphql-client';
 
@@ -23,7 +23,7 @@ import {
     LOCAL_PREFIX,
     randomCouchString,
     PouchDB
-} from '../../';
+} from '../../plugins/core';
 import {
     RxDBReplicationGraphQLPlugin,
     createRevisionForPulledDocument,
@@ -50,12 +50,10 @@ import {
 
 addRxPlugin(RxDBReplicationGraphQLPlugin);
 
-import { RxDBDevModePlugin } from '../../plugins/dev-mode';
 import {
     buildSchema,
     parse as parseQuery
 } from 'graphql';
-addRxPlugin(RxDBDevModePlugin);
 
 declare type WithDeleted<T> = T & { deleted: boolean };
 
@@ -88,6 +86,9 @@ describe('replication-graphql.test.js', () => {
         };
     };
     const pushQueryBuilder = (doc: any) => {
+        if (!doc) {
+            throw new Error();
+        }
         const query = `
         mutation CreateHuman($human: HumanInput) {
             setHuman(human: $human) {
@@ -248,9 +249,7 @@ describe('replication-graphql.test.js', () => {
 
 
                 const pouchDocs = await pouch.find({
-                    selector: {
-                        _id: {}
-                    }
+                    selector: {}
                 });
                 assert.strictEqual(pouchDocs.docs.length, 1);
                 assert.strictEqual(pouchDocs.docs[0]._rev, customRev);
@@ -642,7 +641,7 @@ describe('replication-graphql.test.js', () => {
                         10
                     );
                     const firstDoc = changes.results[0];
-                    assert.ok(firstDoc.doc.id);
+                    assert.ok((firstDoc as any).doc.id);
                     c.database.destroy();
                 });
                 it('should have filtered out replicated docs from the endpoint', async () => {
@@ -719,11 +718,14 @@ describe('replication-graphql.test.js', () => {
                         true
                     );
                     assert.strictEqual(changes.results.length, amount);
-                    assert.ok(changes.results[0].doc.name);
+                    assert.ok((changes as any).results[0].doc.name);
 
                     changes.results.forEach((result) => {
                         const doc = result.doc;
-                        const revisions = doc._revisions;
+                        if (!doc) {
+                            throw new Error('doc not defined');
+                        }
+                        const revisions = (doc as any)._revisions;
 
                         assert.ok(revisions);
                         assert.ok(revisions.ids);
@@ -1191,6 +1193,48 @@ describe('replication-graphql.test.js', () => {
                 server.close();
                 c.database.destroy();
             });
+            it('should fail because initial replication never resolves', async () => {
+                if (config.isFastMode()) {
+                    // this test takes too long, do not run in fast mode
+                    return;
+                }
+                const liveInterval = 4000;
+                const [c, server] = await Promise.all([
+                    humansCollection.createHumanWithTimestamp(0),
+                    SpawnServer.spawn()
+                ]);
+
+                const replicationState = c.syncGraphQL({
+                    url: ERROR_URL,
+                    pull: {
+                        queryBuilder
+                    },
+                    deletedFlag: 'deleted',
+                    live: true,
+                    liveInterval: liveInterval,
+                });
+
+                let timeoutId: any;
+                const timeout = new Promise((_, reject) => {
+                    timeoutId = setTimeout(() => {
+                        clearTimeout(timeoutId);
+                        reject(new Error('Timeout reached'));
+                    },
+                        // small buffer until the promise rejects
+                        liveInterval + 5000);
+                });
+
+                const raceProm = Promise.race([
+                    replicationState.awaitInitialReplication(),
+                    timeout
+                ]).then(_ => clearTimeout(timeoutId));
+
+                // error should be thrown because awaitInitialReplication() should never resolve
+                await AsyncTestUtil.assertThrows(() => raceProm, Error, 'Timeout');
+
+                server.close();
+                c.database.destroy();
+            });
         });
 
         config.parallel('push only', () => {
@@ -1473,6 +1517,45 @@ describe('replication-graphql.test.js', () => {
                 server.close();
                 c.database.destroy();
             });
+            it('should allow asynchronous push and pull modifiers', async () => {
+                const amount = batchSize * 4;
+                const testData = getTestData(amount);
+                const [c, server] = await Promise.all([
+                    humansCollection.createHumanWithTimestamp(amount),
+                    SpawnServer.spawn(testData)
+                ]);
+
+                const asyncModifier = async (d: any) => {
+                    await wait(10);
+                    return d;
+                };
+
+                const replicationState = c.syncGraphQL({
+                    url: server.url,
+                    push: {
+                        batchSize,
+                        queryBuilder: pushQueryBuilder,
+                        modifier: asyncModifier
+                    },
+                    pull: {
+                        queryBuilder: queryBuilder,
+                        modifier: asyncModifier
+                    },
+                    live: false,
+                    deletedFlag: 'deleted'
+                });
+
+                await replicationState.awaitInitialReplication();
+
+                const docsOnServer = server.getDocuments();
+                assert.strictEqual(docsOnServer.length, amount * 2);
+
+                const docsOnDb = await c.find().exec();
+                assert.strictEqual(docsOnDb.length, amount * 2);
+
+                server.close();
+                c.database.destroy();
+            });
             it('should push and pull some docs; live: true', async () => {
                 const amount = batchSize * 1;
                 const testData = getTestData(amount);
@@ -1695,6 +1778,72 @@ describe('replication-graphql.test.js', () => {
                 db1.destroy();
                 db2.destroy();
             });
+            it('should push and pull with modifier filter', async () => {
+                const amount = batchSize * 1;
+
+                const serverData = getTestData(amount);
+                const serverDoc: any = getTestData(1)[0];
+                serverDoc.age = 101;
+                serverData.push(serverDoc);
+                const server = await SpawnServer.spawn(serverData);
+
+                const name = randomCouchString(10);
+                const db = await createRxDatabase({
+                    name,
+                    adapter: 'memory'
+                });
+                const collection = await db.collection({
+                    name: 'humans',
+                    schema: schemas.humanWithTimestamp
+                });
+
+                for (let i = 0; i < amount; i++) {
+                    await collection.insert(schemaObjects.humanWithTimestamp());
+                }
+                const localDoc: any = schemaObjects.humanWithTimestamp();
+                localDoc.age = 102;
+                await collection.insert(localDoc);
+
+                const replicationState = collection.syncGraphQL({
+                    url: server.url,
+                    push: {
+                        batchSize,
+                        queryBuilder: pushQueryBuilder,
+                        modifier: (doc) => {
+                            if (doc.age > 100) {
+                                return null;
+                            }
+                            return doc;
+                        }
+                    },
+                    pull: {
+                        queryBuilder,
+                        modifier: (doc) => {
+                            if (doc.age > 100) {
+                                return null;
+                            }
+                            return doc;
+                        }
+                    },
+                    live: false,
+                    deletedFlag: 'deleted'
+                });
+                const errSub = replicationState.error$.subscribe(() => {
+                    throw new Error('The replication threw an error');
+                });
+
+                await replicationState.awaitInitialReplication();
+
+                const docsOnServer = server.getDocuments();
+                const docsOnDb = await collection.find().exec();
+
+                assert.strictEqual(docsOnServer.length, 2 * amount + 1);
+                assert.strictEqual(docsOnDb.length, 2 * amount + 1);
+
+                errSub.unsubscribe();
+                server.close();
+                db.destroy();
+            });
         });
 
         config.parallel('observables', () => {
@@ -1884,6 +2033,30 @@ describe('replication-graphql.test.js', () => {
                 const build = buildSchema(output.asString);
                 assert.ok(build);
             });
+            it('should create a valid output with subscription params', () => {
+                const output = graphQLSchemaFromRxSchema({
+                    human: {
+                        schema: schemas.humanWithTimestamp,
+                        feedKeys: [
+                            'id',
+                            'updatedAt'
+                        ],
+                        deletedFlag: 'deleted'
+                    },
+                    deepNestedHuman: {
+                        schema: schemas.deepNestedHuman,
+                        feedKeys: [
+                            'passportId'
+                        ],
+                        deletedFlag: 'deleted',
+                        subscriptionParams: {
+                            foo: 'ID!'
+                        }
+                    }
+                });
+                const build = buildSchema(output.asString);
+                assert.ok(build);
+            });
         });
         config.parallel('.pullQueryBuilderFromRxSchema()', () => {
             it('assumption: parseQuery() fails on non-graphql input', () => {
@@ -1984,9 +2157,7 @@ describe('replication-graphql.test.js', () => {
                 assert.strictEqual(docs[0].name, 'Alice');
 
                 const pouchDocs = await collection.pouch.find({
-                    selector: {
-                        _id: {}
-                    }
+                    selector: {}
                 });
                 assert.ok(pouchDocs.docs[0].name !== 'Alice');
 
@@ -2026,15 +2197,101 @@ describe('replication-graphql.test.js', () => {
                 assert.strictEqual(docs[0].name, 'Alice');
 
                 const pouchDocs = await collection.pouch.find({
-                    selector: {
-                        _id: {}
-                    }
+                    selector: {}
                 });
 
                 // first key must be compressed
                 assert.ok(Object.keys(pouchDocs.docs[0])[0].startsWith('|'));
 
                 db.destroy();
+            });
+            it('should work with headers', async () => {
+                const [c, server] = await Promise.all([
+                    humansCollection.createHumanWithTimestamp(0),
+                    SpawnServer.spawn(getTestData(1))
+                ]);
+
+                server.requireHeader('Authorization', 'password');
+                const replicationState = c.syncGraphQL({
+                    url: server.url,
+                    pull: {
+                        queryBuilder
+                    },
+                    headers: {
+                        Authorization: 'password'
+                    },
+                    live: true,
+                    deletedFlag: 'deleted'
+                });
+                await replicationState.awaitInitialReplication();
+
+                const docs = await c.find().exec();
+                assert.strictEqual(docs.length, 1);
+
+                server.close();
+                await c.database.destroy();
+            });
+            it('should work after headers change', async () => {
+                const [c, server] = await Promise.all([
+                    humansCollection.createHumanWithTimestamp(0),
+                    SpawnServer.spawn(getTestData(1))
+                ]);
+
+                server.requireHeader('Authorization', 'password');
+                const replicationState = c.syncGraphQL({
+                    url: server.url,
+                    pull: {
+                        queryBuilder
+                    },
+                    headers: {
+                        Authorization: 'password'
+                    },
+                    live: true,
+                    deletedFlag: 'deleted'
+                });
+                await replicationState.awaitInitialReplication();
+
+                server.requireHeader('Authorization', '1234');
+                const doc = getTestData(1).pop();
+                await server.setDocument(doc);
+
+                replicationState.setHeaders({
+                    'Authorization': '1234'
+                });
+                await replicationState.run();
+
+                const docs = await c.find().exec();
+                assert.strictEqual(docs.length, 2);
+
+                server.close();
+                await c.database.destroy();
+
+                // replication should be canceled when collection is destroyed
+                assert.ok(replicationState.isStopped());
+            });
+            it('should not lose error information', async () => {
+                const [c, server] = await Promise.all([
+                    humansCollection.createHumanWithTimestamp(0),
+                    SpawnServer.spawn(getTestData(1))
+                ]);
+
+                server.requireHeader('Authorization', 'password');
+                const replicationState = c.syncGraphQL({
+                    url: server.url,
+                    pull: {
+                        queryBuilder
+                    },
+                    headers: {
+                        Authorization: 'wrong-password'
+                    },
+                    live: true,
+                    deletedFlag: 'deleted'
+                });
+                const replicationError = await replicationState.error$.pipe(first()).toPromise();
+                assert.notStrictEqual(replicationError.message, '[object Object]');
+
+                server.close();
+                await c.database.destroy();
             });
         });
 
@@ -2255,6 +2512,53 @@ describe('replication-graphql.test.js', () => {
                 // Since push will error out we expect it there to be around 5000/500 = 10 retries
                 assert.ok(replicationState._runCount >= 9, replicationState._runCount.toString());
                 assert.ok(replicationState._runCount <= 11, replicationState._runCount.toString());
+
+                c.database.destroy();
+            });
+            it('#2336 liveInterval-retries should not stack up', async () => {
+                if (config.isFastMode()) {
+                    // this test takes too long, do not run in fast mode
+                    return;
+                }
+
+                const [c, server] = await Promise.all([
+                    humansCollection.createHumanWithTimestamp(batchSize),
+                    SpawnServer.spawn()
+                ]);
+                const pullQueryBuilderFailing = (doc: any) => {
+                    // Note: setHumanFail will error out
+                    const query = `
+                    mutation CreateHuman($human: HumanInput) {
+                        setHumanFail(human: $human) {
+                            id,
+                            updatedAt
+                        }
+                    }
+                    `;
+                    const variables = {
+                        human: doc
+                    };
+
+                    return {
+                        query,
+                        variables
+                    };
+                };
+
+                const replicationState = c.syncGraphQL({
+                    url: server.url,
+                    pull: {
+                        queryBuilder: pullQueryBuilderFailing
+                    },
+                    live: true,
+                    deletedFlag: 'deleted',
+                    retryTime: 1000,
+                    liveInterval: 500
+                });
+
+                // Since push will error out we expect it there to be around 5000/500 = 10 runs with some retries
+                await AsyncTestUtil.wait(5000);
+                assert.ok(replicationState._runCount < 20, replicationState._runCount.toString());
 
                 c.database.destroy();
             });

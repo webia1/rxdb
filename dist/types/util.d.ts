@@ -1,3 +1,4 @@
+import type { BlobBuffer } from './types';
 /**
  * Returns an error that indicates that a plugin is missing
  * We do not throw a RxError because this should not be handled
@@ -87,6 +88,12 @@ export declare const isElectronRenderer: boolean;
 export declare function flattenObject(ob: any): any;
 export declare function getHeightOfRevision(revString: string): number;
 /**
+ * Creates a revision string that does NOT include the revision height
+ * Copied and adapted from pouchdb-utils/src/rev.js
+ * TODO not longer needed when this PR is merged: https://github.com/pouchdb/pouchdb/pull/8274
+ */
+export declare function createRevision(docData: any, deterministic_revs: boolean): string;
+/**
  * prefix of local pouchdb documents
  */
 export declare const LOCAL_PREFIX: string;
@@ -99,4 +106,12 @@ export declare function overwriteGetterForCaching<ValueType = any>(obj: any, get
  * returns true if the given name is likely a folder path
  */
 export declare function isFolderPath(name: string): boolean;
+export declare const blobBufferUtil: {
+    /**
+     * depending if we are on node or browser,
+     * we have to use Buffer(node) or Blob(browser)
+     */
+    createBlobBuffer(data: string, type: string): BlobBuffer;
+    toString(blobBuffer: BlobBuffer): Promise<string>;
+};
 export {};

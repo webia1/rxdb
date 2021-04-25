@@ -71,9 +71,10 @@ In this example-schema we define a hero-collection with the following settings:
 ## Create a collection with the schema
 
 ```javascript
-await myDatabase.collection({
-  name: 'heroes',
-  schema: myHeroSchema
+await myDatabase.addCollections({
+    heroes: {
+        schema: myHeroSchema
+    }
 });
 console.dir(myDatabase.heroes.name);
 // heroes
@@ -87,7 +88,11 @@ When the version is greater than 0, you have to provide the migrationStrategies 
 ## keyCompression
 
 Since version `8.0.0`, the keyCompression is disabled by default. If you have a huge amount of documents it makes sense to enable the keyCompression and save disk-space.
-Notice that `keyCompression` can only be used on the **top-level** of a schema.
+`keyCompression` can only be used on the **top-level** of a schema.
+
+**Notice:** When you use `keyCompression` together with the graphql replication, you must ensure that direct non-RxDB writes to the remote database must also write compressed documents. Therefore it is not recommended to enable `keyCompression` for that use case.
+
+
 
 ```javascript
 const mySchema = {
@@ -210,6 +215,7 @@ const schemaWithFinalAge = {
 
 By adding a field to the `encrypted` list, it will be stored encrypted inside of the data-store. The encryption will run internally, so when you get the `RxDocument`, you can access the unencrypted value.
 You can set all fields to be encrypted, even nested objects. You can not run queries over encrypted fields.
+The password used for encryption is set during database creation. [See RxDatabase](./rx-database.md#password).
 
 ```js
 const schemaWithDefaultAge = {

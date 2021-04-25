@@ -42,9 +42,10 @@ import type {
 import {
     createRxDocuments
 } from './rx-document-prototype-merge';
-import { RxChangeEvent } from './rx-change-event';
+import type { RxChangeEvent } from './rx-change-event';
 import { calculateNewResults } from './event-reduce';
 import { PreparedQuery } from './rx-storate.interface';
+import { triggerCacheReplacement } from './query-cache';
 
 let _queryCount = 0;
 const newQueryID = function (): number {
@@ -53,19 +54,26 @@ const newQueryID = function (): number {
 
 export class RxQueryBase<
     RxDocumentType = any,
+    // TODO also pass DocMethods here
     RxQueryResult = RxDocument<RxDocumentType[]> | RxDocument<RxDocumentType>
     > {
 
     public id: number = newQueryID();
 
     /**
-     * counts how often the execution on the whole db was done
-     * (used for tests and debugging)
+     * Some stats then are used for debugging and cache replacement policies
      */
     public _execOverDatabaseCount: number = 0;
+    public _creationTime = now();
+    public _lastEnsureEqual = 0;
 
     // used by some plugins
     public other: any = {};
+
+    public uncached = false;
+
+    // used to count the subscribers to the query
+    public refCount$ = new BehaviorSubject(null);
 
     constructor(
         public op: RxQueryOP,
@@ -80,7 +88,7 @@ export class RxQueryBase<
         if (!this._$) {
             /**
              * We use _resultsDocs$ to emit new results
-             * This also ensure that there is a reemit on subscribe
+             * This also ensures that there is a reemit on subscribe
              */
             const results$ = (this._resultsDocs$ as any)
                 .pipe(
@@ -104,8 +112,7 @@ export class RxQueryBase<
                         const ret = Array.isArray(docs) ? docs.slice() : docs;
                         return ret;
                     })
-                )['asObservable']();
-
+                ).asObservable();
 
             /**
              * subscribe to the changeEvent-stream so it detects changes if it has subscribers
@@ -120,7 +127,10 @@ export class RxQueryBase<
                 // tslint:disable-next-line
                 merge(
                     results$,
-                    changeEvents$
+                    changeEvents$,
+                    this.refCount$.pipe(
+                        filter(() => false)
+                    )
                 ) as any;
         }
         return this._$ as any;
@@ -155,7 +165,7 @@ export class RxQueryBase<
      * - Emit the new result-set when an RxChangeEvent comes in
      * - Do not emit anything before the first result-set was created (no null)
      */
-    private _$?: BehaviorSubject<RxQueryResult>;
+    public _$?: BehaviorSubject<RxQueryResult>;
 
     /**
      * set the new result-data as result-docs of the query
@@ -189,6 +199,7 @@ export class RxQueryBase<
                 break;
             default:
                 throw newRxError('QU1', {
+                    collection: this.collection.name,
                     op: this.op
                 });
         }
@@ -217,6 +228,7 @@ export class RxQueryBase<
         // TODO this should be ensured by typescript
         if (throwIfMissing && this.op !== 'findOne') {
             throw newRxError('QU9', {
+                collection: this.collection.name,
                 query: this.mangoQuery,
                 op: this.op
             });
@@ -235,6 +247,7 @@ export class RxQueryBase<
             .then(result => {
                 if (!result && throwIfMissing) {
                     throw newRxError('QU10', {
+                        collection: this.collection.name,
                         query: this.mangoQuery,
                         op: this.op
                     });
@@ -417,12 +430,20 @@ export function createRxQuery(
         });
     }
 
+    runPluginHooks('preCreateRxQuery', {
+        op,
+        queryObj,
+        collection
+    });
+
     let ret = new RxQueryBase(op, queryObj, collection);
 
     // ensure when created with same params, only one is created
     ret = tunnelQueryCache(ret);
 
     runPluginHooks('createRxQuery', ret);
+
+    triggerCacheReplacement(collection);
 
     return ret;
 }
@@ -459,6 +480,7 @@ function _ensureEqual(rxQuery: RxQueryBase): Promise<boolean> {
  * @return true if results have changed
  */
 function __ensureEqual(rxQuery: RxQueryBase): Promise<boolean> | boolean {
+    rxQuery._lastEnsureEqual = now();
     if (rxQuery.collection.database.destroyed) return false; // db is closed
     if (_isResultsInSync(rxQuery)) return false; // nothing happend
 

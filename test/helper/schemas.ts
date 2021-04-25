@@ -1,8 +1,8 @@
 import AsyncTestUtil from 'async-test-util';
 
-import {
+import type {
     RxJsonSchema
-} from '../../';
+} from '../../plugins/core';
 import {
     HumanDocumentType,
     SimpleHumanV3DocumentType,
@@ -803,7 +803,15 @@ export function averageSchema(): RxJsonSchema<AverageSchemaDocumentType> {
                 }
             }
         },
-        indexes: ['var1']
+        indexes: [
+            'var1',
+            'deep.deep1',
+            // one compound index
+            [
+                'var2',
+                'var1'
+            ]
+        ]
     };
     return ret;
 }
@@ -983,4 +991,29 @@ export const humanWithDeepNestedIndexes: RxJsonSchema = {
         }
     },
     indexes: ['name', 'job.name', 'job.manager.fullName', 'job.manager.previousJobs.[].name']
+};
+
+export const humanIdAndAgeIndex: RxJsonSchema = {
+    version: 0,
+    description: 'uses a compound index with id as lowest level',
+    type: 'object',
+    properties: {
+        id: {
+            type: 'string',
+            primary: true
+        },
+        name: {
+            type: 'string'
+        },
+        age: {
+            description: 'Age in years',
+            type: 'integer',
+            minimum: 0,
+            maximum: 150
+        }
+    },
+    required: ['id', 'name', 'age'],
+    indexes: [
+        ['age', 'id']
+    ]
 };

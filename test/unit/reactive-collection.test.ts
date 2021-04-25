@@ -6,13 +6,13 @@ import * as schemaObjects from '../helper/schema-objects';
 import * as humansCollection from '../helper/humans-collection';
 
 import {
-    createRxDatabase, randomCouchString
-} from '../../';
+    createRxDatabase, randomCouchString, isRxDocument
+} from '../../plugins/core';
 import AsyncTestUtil from 'async-test-util';
 import {
     first
 } from 'rxjs/operators';
-import { RxChangeEvent } from '../../src/rx-change-event';
+import { RxChangeEvent, RxChangeEventDelete } from '../../src/rx-change-event';
 
 config.parallel('reactive-collection.test.js', () => {
     describe('.insert()', () => {
@@ -61,6 +61,68 @@ config.parallel('reactive-collection.test.js', () => {
                 assert.strictEqual(calls, 0);
                 sub.unsubscribe();
                 db.destroy();
+            });
+        });
+    });
+    describe('.bulkInsert()', () => {
+        describe('positive', () => {
+            it('should fire on bulk insert', async () => {
+                const db = await createRxDatabase({
+                    name: randomCouchString(10),
+                    adapter: 'memory'
+                });
+                const collection = await db.collection({
+                    name: 'human',
+                    schema: schemas.primaryHuman
+                });
+
+                const emittedCollection: RxChangeEvent[] = [];
+                const colSub = collection.insert$.subscribe((ce) => {
+                    emittedCollection.push(ce);
+                });
+
+                const docs = new Array(1).fill(0).map(() => schemaObjects.human());
+
+                await collection.bulkInsert(docs);
+
+                const changeEvent = emittedCollection[0];
+                assert.strictEqual(changeEvent.operation, 'INSERT');
+                assert.strictEqual(changeEvent.collectionName, 'human');
+                assert.strictEqual(changeEvent.documentId, docs[0].passportId);
+                assert.ok(isRxDocument(changeEvent.rxDocument));
+                assert.ok(changeEvent.documentData);
+
+                colSub.unsubscribe();
+                db.destroy();
+            });
+        });
+    });
+    describe('.bulkRemove()', () => {
+        describe('positive', () => {
+            it('should fire on bulk remove', async () => {
+                const c = await humansCollection.create(10);
+
+                const emittedCollection: RxChangeEventDelete[] = [];
+                const colSub = c.remove$.subscribe((ce) => {
+                    emittedCollection.push(ce);
+                });
+
+                const docList = await c.find().exec();
+                const primaryList = docList.map(doc => doc.primary);
+
+                await c.bulkRemove(primaryList);
+
+                const changeEvent = emittedCollection[0];
+
+                assert.strictEqual(changeEvent.operation, 'DELETE');
+                assert.strictEqual(changeEvent.collectionName, 'human');
+                assert.strictEqual(changeEvent.documentId, docList[0].primary);
+                assert.ok(isRxDocument(changeEvent.rxDocument));
+                assert.ok(changeEvent.documentData);
+                assert.ok(changeEvent.previousData);
+
+                colSub.unsubscribe();
+                c.database.destroy();
             });
         });
     });

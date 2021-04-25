@@ -39,7 +39,7 @@ var _watchForChanges = require("./watch-for-changes");
 var INTERNAL_POUCHDBS = new WeakSet();
 
 var RxReplicationStateBase = /*#__PURE__*/function () {
-  function RxReplicationStateBase(collection) {
+  function RxReplicationStateBase(collection, syncOptions) {
     var _this = this;
 
     this._subs = [];
@@ -52,7 +52,9 @@ var RxReplicationStateBase = /*#__PURE__*/function () {
       alive: new _rxjs.BehaviorSubject(false),
       error: new _rxjs.Subject()
     };
+    this.canceled = false;
     this.collection = collection;
+    this.syncOptions = syncOptions;
     // create getters
     Object.keys(this._subjects).forEach(function (key) {
       Object.defineProperty(_this, key + '$', {
@@ -65,8 +67,37 @@ var RxReplicationStateBase = /*#__PURE__*/function () {
 
   var _proto = RxReplicationStateBase.prototype;
 
+  _proto.awaitInitialReplication = function awaitInitialReplication() {
+    if (this.syncOptions.options && this.syncOptions.options.live) {
+      throw (0, _rxError.newRxError)('RC4', {
+        database: this.collection.database.name,
+        collection: this.collection.name
+      });
+    }
+
+    if (this.collection.database.multiInstance && this.syncOptions.waitForLeadership) {
+      throw (0, _rxError.newRxError)('RC5', {
+        database: this.collection.database.name,
+        collection: this.collection.name
+      });
+    }
+
+    var that = this;
+    return that.complete$.pipe((0, _operators.filter)(function (x) {
+      return !!x;
+    }), (0, _operators.first)()).toPromise();
+  };
+
   _proto.cancel = function cancel() {
-    if (this._pouchEventEmitterObject) this._pouchEventEmitterObject.cancel();
+    if (this.canceled) {
+      return;
+    }
+
+    this.canceled = true;
+
+    if (this._pouchEventEmitterObject) {
+      this._pouchEventEmitterObject.cancel();
+    }
 
     this._subs.forEach(function (sub) {
       return sub.unsubscribe();
@@ -79,11 +110,14 @@ var RxReplicationStateBase = /*#__PURE__*/function () {
 exports.RxReplicationStateBase = RxReplicationStateBase;
 
 function setPouchEventEmitter(rxRepState, evEmitter) {
-  if (rxRepState._pouchEventEmitterObject) throw (0, _rxError.newRxError)('RC1');
+  if (rxRepState._pouchEventEmitterObject) {
+    throw (0, _rxError.newRxError)('RC1');
+  }
+
   rxRepState._pouchEventEmitterObject = evEmitter; // change
 
   rxRepState._subs.push((0, _rxjs.fromEvent)(evEmitter, 'change').subscribe(function (ev) {
-    return rxRepState._subjects.change.next(ev);
+    rxRepState._subjects.change.next(ev);
   })); // denied
 
 
@@ -163,8 +197,8 @@ function setPouchEventEmitter(rxRepState, evEmitter) {
   }));
 }
 
-function createRxReplicationState(collection) {
-  return new RxReplicationStateBase(collection);
+function createRxReplicationState(collection, syncOptions) {
+  return new RxReplicationStateBase(collection, syncOptions);
 }
 
 function sync(_ref) {
@@ -206,15 +240,29 @@ function sync(_ref) {
   }
 
   var syncFun = (0, _pouchDb.pouchReplicationFunction)(this.pouch, direction);
-  if (query) useOptions.selector = query.keyCompress().selector;
-  var repState = createRxReplicationState(this); // run internal so .sync() does not have to be async
 
-  var waitTillRun = waitForLeadership ? this.database.waitForLeadership() : (0, _util.promiseWait)(0);
+  if (query) {
+    useOptions.selector = query.keyCompress().selector;
+  }
+
+  var repState = createRxReplicationState(this, {
+    remote: remote,
+    waitForLeadership: waitForLeadership,
+    direction: direction,
+    options: options,
+    query: query
+  }); // run internal so .sync() does not have to be async
+
+  var waitTillRun = waitForLeadership && this.database.multiInstance // do not await leadership if not multiInstance
+  ? this.database.waitForLeadership() : (0, _util.promiseWait)(0);
   waitTillRun.then(function () {
-    var pouchSync = syncFun(remote, useOptions);
+    if (_this2.destroyed || repState.canceled) {
+      return;
+    }
 
     _this2.watchForChanges();
 
+    var pouchSync = syncFun(remote, useOptions);
     setPouchEventEmitter(repState, pouchSync);
 
     _this2._repStates.push(repState);
@@ -237,6 +285,7 @@ var hooks = {
 };
 exports.hooks = hooks;
 var RxDBReplicationPlugin = {
+  name: 'replication',
   rxdb: rxdb,
   prototypes: prototypes,
   hooks: hooks

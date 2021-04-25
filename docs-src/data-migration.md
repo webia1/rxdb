@@ -10,14 +10,15 @@ Upon creation of a collection, you have to provide migrationStrategies when your
 
 
 ```javascript
-myDatabase.collection({
-  name: 'messages',
-  schema: messageSchemaV1,
-  migrationStrategies: {
-    // 1 means, this transforms data from version 0 to version 1
-    1: function(oldDoc){
-      oldDoc.time = new Date(oldDoc.time).getTime(); // string to unix
-      return oldDoc;
+myDatabase.addCollections({
+  messages: {
+    schema: messageSchemaV1,
+    migrationStrategies: {
+      // 1 means, this transforms data from version 0 to version 1
+      1: function(oldDoc){
+        oldDoc.time = new Date(oldDoc.time).getTime(); // string to unix
+        return oldDoc;
+      }
     }
   }
 });
@@ -26,28 +27,29 @@ myDatabase.collection({
 Asynchronous strategies can also be used:
 
 ```javascript
-myDatabase.collection({
-  name: 'messages',
-  schema: messageSchemaV1,
-  migrationStrategies: {
-    1: function(oldDoc){
-      oldDoc.time = new Date(oldDoc.time).getTime(); // string to unix
-      return oldDoc;
-    },
-    /**
-     * 2 means, this transforms data from version 1 to version 2
-     * this returns a promise which resolves with the new document-data
-     */
-    2: function(oldDoc){
-      // in the new schema (version: 2) we defined 'senderCountry' as required field (string)
-      // so we must get the country of the message-sender from the server
-      const coordinates = oldDoc.coordinates;
-      return fetch('http://myserver.com/api/countryByCoordinates/'+coordinates+'/')
-        .then(response => {
-          const response = response.json();
-          oldDoc.senderCountry=response;
-          return oldDoc;
-        });
+myDatabase.addCollections({
+  messages: {
+    schema: messageSchemaV1,
+    migrationStrategies: {
+      1: function(oldDoc){
+        oldDoc.time = new Date(oldDoc.time).getTime(); // string to unix
+        return oldDoc;
+      },
+      /**
+       * 2 means, this transforms data from version 1 to version 2
+       * this returns a promise which resolves with the new document-data
+       */
+      2: function(oldDoc){
+        // in the new schema (version: 2) we defined 'senderCountry' as required field (string)
+        // so we must get the country of the message-sender from the server
+        const coordinates = oldDoc.coordinates;
+        return fetch('http://myserver.com/api/countryByCoordinates/'+coordinates+'/')
+          .then(response => {
+            const response = response.json();
+            oldDoc.senderCountry=response;
+            return oldDoc;
+          });
+      }
     }
   }
 });
@@ -56,22 +58,23 @@ myDatabase.collection({
 you can also filter which documents should be migrated:
 
 ```js
-myDatabase.collection({
-  name: 'messages',
-  schema: messageSchemaV1,
-  migrationStrategies: {
-    // 1 means, this transforms data from version 0 to version 1
-    1: function(oldDoc){
-      oldDoc.time = new Date(oldDoc.time).getTime(); // string to unix
-      return oldDoc;
-    },
-    /**
-     * this removes all documents older then 2017-02-12
-     * they will not appear in the new collection
-     */
-    2: function(oldDoc){
-      if(oldDoc.time < 1486940585) return null;
-      else return oldDoc;
+myDatabase.addCollections({
+  messages: {
+    schema: messageSchemaV1,
+    migrationStrategies: {
+      // 1 means, this transforms data from version 0 to version 1
+      1: function(oldDoc){
+        oldDoc.time = new Date(oldDoc.time).getTime(); // string to unix
+        return oldDoc;
+      },
+      /**
+       * this removes all documents older then 2017-02-12
+       * they will not appear in the new collection
+       */
+      2: function(oldDoc){
+        if(oldDoc.time < 1486940585) return null;
+        else return oldDoc;
+      }
     }
   }
 });
@@ -82,16 +85,17 @@ myDatabase.collection({
 By default, the migration automatically happens when the collection is created. If you have lots of data or the migrationStrategies take a long time, it might be better to start the migration 'by hand' and show the migration-state to the user as a loading-bar.
 
 ```javascript
-const messageCol = await myDatabase.collection({
-  name: 'messages',
-  schema: messageSchemaV1,
-  autoMigrate: false, // <- migration will not run at creation
-  migrationStrategies: {
-    1: async function(oldDoc){
-      ...
-      anything that takes very long
-      ...
-      return oldDoc;
+const messageCol = await myDatabase.addCollections({
+  messages: {
+    schema: messageSchemaV1,
+    autoMigrate: false, // <- migration will not run at creation
+    migrationStrategies: {
+      1: async function(oldDoc){
+        ...
+        anything that takes very long
+        ...
+        return oldDoc;
+      }
     }
   }
 });
@@ -129,6 +133,52 @@ If you don't want to show the state to the user, you can also use `.migratePromi
   await migratePromise;
 ```
 
+
+
+## migrationStates()
+
+`RxDatabase.migrationStates()` returns an `Observable` that emits all events to the ongoing migrations of all `RxCollection`s. Use it to log the current state of the overall migration process or to show a loading state to your user.
+
+```js
+const allStatesObservable = myDatabase.migrationStates();
+allStatesObservable.subscribe(allStates => {
+  allStates.forEach(collectionState => {
+    console.log(
+      'migration state of ' +
+      collectionState.collection.name + ': ' +
+      collectionState.state.done
+    );
+  });
+});
+```
+
+## Migrating attachments
+
+When you store `RxAttachment`s together with your document, they can also be changed, added or removed while running the migration.
+You can do this by mutating the `oldDoc._attachments` property.
+
+```js
+import { blobBufferUtil } from 'rxdb/plugins/core';
+const migrationStrategies = {
+      1: async function(oldDoc){
+        // do nothing with _attachments to keep all attachments and have them in the new collection version.
+        return oldDoc;
+      },
+      2: async function(oldDoc){
+        // set _attachments to an empty object to delete all existing ones during the migration.
+        oldDoc._attachments = {};
+        return oldDoc;
+      }
+      3: async function(oldDoc){
+        // update the data field of a single attachment to change its data. 
+        oldDoc._attachments.myFile.data = await blobBufferUtil.createBlobBuffer(
+          'my new text',
+          oldDoc._attachments.myFile.content_type
+        );
+        return oldDoc;
+      }
+}
+```
 
 ## Hint
 If your migration takes a long time, combine it with the leaderElection to make sure you don't waste your users' resources by running it in 2 open tabs.

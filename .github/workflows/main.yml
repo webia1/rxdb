@@ -1,0 +1,358 @@
+# This is a basic workflow to help you get started with Actions
+
+name: CI
+
+# Controls when the action will run. 
+on:
+  # Triggers the workflow on push or pull request events but only for the master branch
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# For a lower total time
+# the jobs which take longes must come before the faster ones
+# because github will start them likely earlier
+jobs:
+
+  core:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-18.04
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v2.1.5
+        with:
+          node-version: 13.8.0
+
+      - name: install npm dependencies
+        run: npm install
+      
+      - name: build
+        run: npm run build
+      
+      - name: test:typings
+        run: npm run test:typings
+        
+      - name: npm run test:node
+        run: npm run test:node
+  
+      - name: npm run test:fast
+        run: npm run test:fast
+        
+      - name: npm run test:performance
+        run: npm run test:performance
+
+      - name: node example
+        run: cd ./examples/node && npm install > "/dev/null" 2>&1 && npm run test
+
+
+  angular:
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: install dependencies
+        run: sudo apt-get update && sudo apt-get install -y chromium-browser
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v2.1.5
+        with:
+          node-version: 13.8.0
+
+      - name: Reuse npm cache folder
+        uses: actions/cache@v2
+        env:
+          cache-name: cache-node-modules
+        with:
+          path: |
+            ~/.npm
+            ./node_modules
+            ./examples/angular/node_modules
+          # invalidate cache when any package-lock.json changes
+          key: ${{ runner.os }}-npm-angular-${{ hashFiles('**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-angular-
+
+      - name: prepare core
+        run: |
+          npm install
+          npm run build
+          rm -r node_modules
+      - name: angular build
+        working-directory: ./examples/angular
+        run: |
+          npm install > "/dev/null" 2>&1
+          npm run lint && npm run build
+
+      - name: angular test
+        uses: GabrielBB/xvfb-action@v1
+        with:
+          working-directory: ./examples/angular #optional
+          run: npm run test:build
+
+      - name: angular test ssr
+        working-directory: ./examples/angular
+        run: npm run test:ssr
+
+  test-builds:
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: prepare core
+        run: |
+          npm install
+          npm run build
+
+      - name: measure build size
+        run: npm run build:size
+        
+      - name: test rollup build
+        run: npm run build:rollup
+
+
+  test-code-style:
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: prepare core
+        run: |
+          npm install
+          npm run build
+      - name: test:deps
+        run: npm run test:deps
+
+      - name: test:circular
+        run: npm run test:circular
+
+      - name: lint
+        run: npm run lint
+
+      - name: check types
+        run: npm run check-types
+
+  electron:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: install dependencies
+        run: sudo apt-get update && sudo apt-get install -y chromium-browser
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v2.1.5
+        with:
+          node-version: 13.8.0
+      - name: prepare core
+        run: |
+          npm install
+          npm run build
+      - name: electron install
+        working-directory: ./examples/electron
+        run: npm install > "/dev/null" 2>&1
+
+      # TODO I had to disable that again because the tests randomly fail. We need to upgrade electron and spectron
+      #- name: electron test
+      #  uses: GabrielBB/xvfb-action@v1.4
+      #  with:
+      #    working-directory: ./examples/electron
+      #    run: npm run test
+
+      - name: electron-remote install
+        working-directory: ./examples/electron-remote
+        run: npm install > "/dev/null" 2>&1
+
+      - name: electron-remote test
+        uses: GabrielBB/xvfb-action@v1.5
+        with:
+          working-directory: ./examples/electron-remote
+          run: npm run test
+
+  react:
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: install dependencies
+        run: sudo apt-get update && sudo apt-get install -y chromium-browser
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v2.1.5
+        with:
+          node-version: 13.8.0
+      - name: prepare core
+        run: |
+          npm install
+          npm run build
+          rm -r node_modules
+      - name: react install
+        run: |
+          cd ./examples/react
+          npm install > "/dev/null" 2>&1
+          npm run build
+
+      - name: react test
+        uses: GabrielBB/xvfb-action@v1.5
+        with:
+          working-directory: ./examples/react
+          run: npm run test:build
+
+  react-native:
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v2.1.5
+        with:
+          node-version: 13.8.0
+
+      - name: Reuse npm cache folder
+        uses: actions/cache@v2
+        env:
+          cache-name: cache-node-modules
+        with:
+          path: |
+            ~/.npm
+            ./node_modules
+            ./examples/react-native/node_modules
+          # invalidate cache when any package-lock.json changes
+          key: ${{ runner.os }}-npm-react-native-${{ hashFiles('**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-react-native-
+
+      - name: prepare core
+        run: |
+          npm install
+          npm run build
+          rm -r node_modules
+      - name: react-native
+        run: |
+          cd ./examples/react-native
+          npx yarn@1.13.0 install > "/dev/null" 2>&1
+          npm run test
+          echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf
+          sudo sysctl -p
+          npm run test:bundle
+
+  vue:
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: install dependencies
+        run: sudo apt-get update && sudo apt-get install -y chromium-browser
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v2.1.5
+        with:
+          node-version: 13.8.0
+      - name: prepare core
+        run: |
+          npm install
+          npm run build
+          rm -r node_modules
+      - name: vue build
+        run: |
+          cd ./examples/vue && npm install > "/dev/null" 2>&1
+          npm run lint && npm run build
+        
+      - name: vue test
+        uses: GabrielBB/xvfb-action@v1
+        with:
+          working-directory: ./examples/vue
+          run: npm run test
+
+  graphql:
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: install dependencies
+        run: sudo apt-get update && sudo apt-get install -y chromium-browser
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v2.1.5
+        with:
+          node-version: 13.8.0
+      - name: prepare core
+        run: |
+          npm install
+          npm run build
+
+      - name: install
+        working-directory: ./examples/graphql
+        run: npm install
+      - name: build
+        working-directory: ./examples/graphql
+        run: npm run build
+      - name: test
+        uses: GabrielBB/xvfb-action@v1.5
+        with:
+          working-directory: ./examples/graphql
+          run: npm run test:ci
+
+
+  test-browser-couch:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-18.04
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      - uses: actions/checkout@v2
+      - uses: docker/setup-buildx-action@v1
+
+      - name: install linux
+        run: sudo apt-get update && sudo apt-get install -y chromium-browser
+
+       # https://github.com/docker/build-push-action/blob/master/docs/advanced/cache.md#github-cache
+      - name: Cache Docker layers
+        uses: actions/cache@v2
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx
+
+      - name: start couchdb container
+        run: docker run -d -p 5984:5984 --rm --name rxdb-couchdb couchdb:2.1.1
+
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v2.1.5
+        with:
+          node-version: 13.8.0
+
+      - name: prepare core
+        run: |
+          npm install
+          npm run build
+
+      - name: npm run test:browser
+        uses: GabrielBB/xvfb-action@v1
+        with:
+          working-directory: ./ #optional
+          run: npm run test:browser
+        
+      - name: npm run test:couchdb
+        run: npm run test:couchdb
+
+  test-tutorials:
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: prepare core
+        run: |
+          npm install
+          npm run build
+      - name: test tutorials
+        working-directory: ./test/tutorials/
+        run: |
+          npm install
+          npm test
+
+  test-multiple-times:
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: prepare core
+        run: |
+          npm install
+          npm run build
+       # in the past we had tests that failed randomly
+       # to prevent this we run the tests in fast-mode 10 times
+      - name: unit tests 10 times
+        run: for i in `seq 10`; do npm run test:fast; done

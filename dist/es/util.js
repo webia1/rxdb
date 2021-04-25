@@ -187,18 +187,19 @@ export function sortObject(obj) {
       if (typeof a === 'string' && typeof b === 'string') return a.localeCompare(b);
       if (typeof a === 'object') return 1;else return -1;
     }).map(function (i) {
-      return sortObject(i);
+      return sortObject(i, noArraySort);
     });
   } // object
+  // array is also of type object
 
 
-  if (typeof obj === 'object') {
+  if (typeof obj === 'object' && !Array.isArray(obj)) {
     if (obj instanceof RegExp) return obj;
     var out = {};
     Object.keys(obj).sort(function (a, b) {
       return a.localeCompare(b);
     }).forEach(function (key) {
-      out[key] = sortObject(obj[key]);
+      out[key] = sortObject(obj[key], noArraySort);
     });
     return out;
   } // everything else
@@ -322,6 +323,25 @@ export function getHeightOfRevision(revString) {
   var first = revString.split('-')[0];
   return parseInt(first, 10);
 }
+import { stringMd5 } from 'pouchdb-md5';
+import { rev as pouchUtilsRev } from 'pouchdb-utils';
+/**
+ * Creates a revision string that does NOT include the revision height
+ * Copied and adapted from pouchdb-utils/src/rev.js
+ * TODO not longer needed when this PR is merged: https://github.com/pouchdb/pouchdb/pull/8274
+ */
+
+export function createRevision(docData, deterministic_revs) {
+  if (!deterministic_revs) {
+    return pouchUtilsRev(docData, false);
+  }
+
+  var docWithoutRev = Object.assign({}, docData, {
+    _rev: undefined,
+    _rev_tree: undefined
+  });
+  return stringMd5(JSON.stringify(docWithoutRev));
+}
 /**
  * prefix of local pouchdb documents
  */
@@ -354,4 +374,63 @@ export function isFolderPath(name) {
     return false;
   }
 }
+export var blobBufferUtil = {
+  /**
+   * depending if we are on node or browser,
+   * we have to use Buffer(node) or Blob(browser)
+   */
+  createBlobBuffer: function createBlobBuffer(data, type) {
+    var blobBuffer;
+
+    if (isElectronRenderer) {
+      // if we are inside of electron-renderer, always use the node-buffer
+      return Buffer.from(data, {
+        type: type
+      });
+    }
+
+    try {
+      // for browsers
+      blobBuffer = new Blob([data], {
+        type: type
+      });
+    } catch (e) {
+      // for node
+      blobBuffer = Buffer.from(data, {
+        type: type
+      });
+    }
+
+    return blobBuffer;
+  },
+  toString: function toString(blobBuffer) {
+    if (blobBuffer instanceof Buffer) {
+      // node
+      return nextTick().then(function () {
+        return blobBuffer.toString();
+      });
+    }
+
+    return new Promise(function (res) {
+      // browsers
+      var reader = new FileReader();
+      reader.addEventListener('loadend', function (e) {
+        var text = e.target.result;
+        res(text);
+      });
+      var blobBufferType = Object.prototype.toString.call(blobBuffer);
+      /**
+       * in the electron-renderer we have a typed array insteaf of a blob
+       * so we have to transform it.
+       * @link https://github.com/pubkey/rxdb/issues/1371
+       */
+
+      if (blobBufferType === '[object Uint8Array]') {
+        blobBuffer = new Blob([blobBuffer]);
+      }
+
+      reader.readAsText(blobBuffer);
+    });
+  }
+};
 //# sourceMappingURL=util.js.map

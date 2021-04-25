@@ -2,6 +2,7 @@ import { RxJsonSchema } from './rx-schema';
 import {
     RxSchema
 } from '../rx-schema';
+import { RxPlugin } from './rx-plugin';
 
 export declare class RxError extends Error {
     readonly rxdb: boolean; // always true, use this to detect if its an rxdb-error
@@ -29,10 +30,11 @@ export interface RxErrorParameters {
     readonly childpath?: string;
     readonly obj?: any;
     readonly document?: any;
-    readonly schema?: RxJsonSchema | RxSchema;
+    readonly schema?: Readonly<RxJsonSchema | RxSchema>;
     readonly schemaObj?: any;
     readonly pluginKey?: string;
-    readonly finalDoc?: any;
+    readonly originalDoc?: Readonly<any>;
+    readonly finalDoc?: Readonly<any>;
     readonly regex?: string;
     readonly fieldName?: string;
     readonly id?: string;
@@ -82,8 +84,9 @@ export interface RxErrorParameters {
     readonly parallel?: boolean;
     readonly collection?: any;
     readonly database?: any;
-    readonly indexes?: Array<string|string[]>;
-    readonly index?: string|string[];
+    readonly indexes?: Array<string | string[]>;
+    readonly index?: string | string[];
+    readonly plugins?: Set<RxPlugin | any>;
 }
 
 /**

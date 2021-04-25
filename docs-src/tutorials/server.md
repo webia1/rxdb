@@ -57,9 +57,10 @@ const mySchema = {
         }
     }
 };
-await db.collection({
-    name: 'items',
-    schema: mySchema
+await db.addCollections({
+    items: {
+        schema: mySchema
+    }
 });
 
 // insert one document
@@ -72,17 +73,25 @@ await db.items.insert({
 Now we can spawn the server. Besides the RxDB specific options, you can set `pouchdbExpressOptions` which are [defined by the express-pouchdb module](https://github.com/pouchdb/pouchdb-server#api).
 
 ```typescript
-const {app, server} = db.server({
+const {app, server, startupPromise} = db.server({
     path: '/db', // (optional)
     port: 3000,  // (optional)
     cors: true,   // (optional), enable CORS-headers
-    startServer: true // (optional), start express server
+    startServer: true, // (optional), start express server
     // options of the pouchdb express server
     pouchdbExpressOptions: {
         inMemoryConfig: true, // do not write a config.json
         logPath: '/tmp/rxdb-server-log.txt' // save logs in tmp folder
     }
 });
+
+/**
+ * You can await the startupPromise
+ * so you know when the server has sucessfully started up.
+ * In the future, db.server() will return a Promise directly instead.
+ */
+await startupPromise;
+
 ```
 
 To ensure that everything is ok,
@@ -105,7 +114,7 @@ const {app, server} = db.server({
 Then you can mount rxdb server express app in your express app
 
 ```typescript
-const {app, server} = db.server({
+const { app, server } = db.server({
     startServer: false
 });
 const mainApp = express();
@@ -141,9 +150,10 @@ const clientDB = await createRxDatabase({
 });
 
 // create a collection
-await clientDB.collection({
-    name: 'items',
-    schema: mySchema
+await clientDB.addCollections({
+    items: {
+        schema: mySchema
+    }
 });
 ```
 

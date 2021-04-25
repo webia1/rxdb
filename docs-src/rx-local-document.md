@@ -52,6 +52,16 @@ Find a `RxLocalDocument` by it's id. Returns a Promise which resolves the `RxLoc
 const localDoc = await myCollection.getLocal('foobar');
 ```
 
+## getLocal$()
+
+Like `getLocal$()` but returns an `Observable` that emits the document or `null` if not exists.
+
+```javascript
+const subscription = myCollection.getLocal$('foobar').subscribe(documentOrNull => {
+    console.dir(documentOrNull); // > RxLocalDocument or null
+});
+```
+
 ## RxLocalDocument
 
 A `RxLocalDocument` behaves like a normal `RxDocument`.
@@ -81,6 +91,23 @@ const foo = localDoc.get('foo'); // works!
 
 localDoc.foo = 'bar'; // does not work!
 localDoc.set('foo', 'bar'); // works
+```
+
+For the usage with typescript, you can have access to the typed data of the document over `toJSON()`
+
+```ts
+declare type MyLocalDocumentType = {
+  foo: string
+}
+const localDoc = await myCollection.upsertLocal<MyLocalDocumentType>(
+    'foobar',   // id
+    {           // data
+        foo: 'bar'
+    }
+);
+
+// typescript will know that foo is a string
+const foo: string = localDoc.toJSON().foo;
 ```
 
 

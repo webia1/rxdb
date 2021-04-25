@@ -18,6 +18,16 @@ const query = myCollection
 A findOne-query has only a single `RxDocument` or `null` as result-set.
 
 ```js
+// find alice
+const query = myCollection
+    .findOne({
+      selector: {
+        name: 'alice'
+      }
+    })
+```
+
+```js
 // find the youngest one
 const query = myCollection
     .findOne()
@@ -35,7 +45,7 @@ console.dir(results); // > [RxDocument,RxDocument,RxDocument..]
 
 ## Observe $
 An `BehaviorSubject` [see](https://medium.com/@luukgruijs/understanding-rxjs-behaviorsubject-replaysubject-and-asyncsubject-8cc061f1cfc0) that always has the current result-set as value.
-This is extremely helpfull when used together with UIs that should always show the same state as what is written in the database.
+This is extremely helpful when used together with UIs that should always show the same state as what is written in the database.
 
 ```js
 const query = myCollection.find();
